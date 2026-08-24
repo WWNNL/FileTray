@@ -36,7 +36,7 @@ public sealed class DiscoveryService : IDisposable
     private Func<string> _aliasProvider = () => Environment.MachineName;
     private Func<string> _fingerprintProvider = () => "";
     private Func<int> _portProvider = () => 0;
-    private Func<string?> _roomProvider = () => null;
+    private Func<IReadOnlyList<string>> _roomCodesProvider = () => Array.Empty<string>();
 
     public event Action? DevicesChanged;
 
@@ -53,12 +53,12 @@ public sealed class DiscoveryService : IDisposable
         Func<string> aliasProvider,
         Func<string> fingerprintProvider,
         Func<int> portProvider,
-        Func<string?> roomProvider)
+        Func<IReadOnlyList<string>> roomCodesProvider)
     {
         _aliasProvider = aliasProvider;
         _fingerprintProvider = fingerprintProvider;
         _portProvider = portProvider;
-        _roomProvider = roomProvider;
+        _roomCodesProvider = roomCodesProvider;
 
         _sender.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
         _sender.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, true);
@@ -92,7 +92,7 @@ public sealed class DiscoveryService : IDisposable
                     Ip = remoteIp,
                     Port = info.Port > 0 ? info.Port : 53317,
                     Protocol = string.IsNullOrEmpty(info.Protocol) ? "http" : info.Protocol,
-                    Room = string.IsNullOrEmpty(info.Room) ? null : info.Room,
+                    Rooms = ToRoomSet(info.Rooms),
                     LastSeenUtc = DateTime.UtcNow,
                 };
             },
@@ -102,7 +102,7 @@ public sealed class DiscoveryService : IDisposable
                 existing.Ip = remoteIp;
                 if (info.Port > 0) existing.Port = info.Port;
                 if (!string.IsNullOrEmpty(info.Protocol)) existing.Protocol = info.Protocol;
-                existing.Room = string.IsNullOrEmpty(info.Room) ? null : info.Room;
+                existing.Rooms = ToRoomSet(info.Rooms);
                 existing.LastSeenUtc = DateTime.UtcNow;
                 return existing;
             });
@@ -176,7 +176,7 @@ public sealed class DiscoveryService : IDisposable
                 Download = false,
                 Announce = announce,
                 App = "filetray",
-                Room = _roomProvider(),
+                Rooms = _roomCodesProvider().ToList(),
             };
             var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, Http.Json);
 
@@ -243,6 +243,11 @@ public sealed class DiscoveryService : IDisposable
             Log.Warn($"枚举网卡失败: {ex.Message}");
         }
     }
+
+    private static HashSet<string> ToRoomSet(List<string>? rooms)
+        => rooms is { Count: > 0 }
+            ? new HashSet<string>(rooms, StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private void Prune()
     {

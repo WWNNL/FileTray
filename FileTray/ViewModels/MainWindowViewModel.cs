@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -18,6 +19,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly HttpApiService _server;
     private readonly RoomService _room;
     private readonly TransferService _transfer;
+    private readonly LatencyService _latency;
+
+    private int _refreshQueued;
+    private bool _updatingDetail;
 
     /// <summary>由 MainWindow 在打开后注入的文件选择器(打开多个文件)。</summary>
     public Func<Task<IReadOnlyList<string>>>? PickFilesAsync { get; set; }
@@ -31,14 +36,19 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private DeviceListItemViewModel? _selectedDevice;
     [ObservableProperty] private string _messageInput = "";
     [ObservableProperty] private string _statusText = "就绪";
-    [ObservableProperty] private bool _isInRoom;
-    [ObservableProperty] private string _roomCode = "";
-    [ObservableProperty] private string _roleText = "";
-    [ObservableProperty] private string _memberSummary = "";
     [ObservableProperty] private string _joinCodeInput = "";
+    [ObservableProperty] private bool _hasRooms;
+    [ObservableProperty] private bool _isRoomSelected;
+    [ObservableProperty] private string _roomCode = "";
+    [ObservableProperty] private string _trayHeader = "";
+
+    [ObservableProperty] private RoomListItemViewModel? _selectedRoom;
+    [ObservableProperty] private MemberListItemViewModel? _selectedMember;
 
     public ObservableCollection<DeviceListItemViewModel> Devices { get; } = new();
     public ObservableCollection<MessageItemViewModel> Messages { get; } = new();
+    public ObservableCollection<RoomListItemViewModel> Rooms { get; } = new();
+    public ObservableCollection<MemberListItemViewModel> Members { get; } = new();
     public ObservableCollection<TrayItemViewModel> TrayItems { get; } = new();
 
     public MainWindowViewModel(
@@ -46,22 +56,20 @@ public partial class MainWindowViewModel : ViewModelBase
         DiscoveryService discovery,
         HttpApiService server,
         RoomService room,
-        TransferService transfer)
+        TransferService transfer,
+        LatencyService latency)
     {
         _settings = settings;
         _discovery = discovery;
         _server = server;
         _room = room;
         _transfer = transfer;
+        _latency = latency;
         _aliasInput = settings.Alias;
 
-        _discovery.DevicesChanged += () => Dispatcher.UIThread.Post(RefreshDevices);
-        _room.RoomStateChanged += () => Dispatcher.UIThread.Post(RefreshRoom);
-        _room.RoomClosed += reason => Dispatcher.UIThread.Post(() =>
-        {
-            RefreshRoom();
-            StatusText = $"已退出房间: {reason}";
-        });
+        _discovery.DevicesChanged += ScheduleRefresh;
+        _latency.CycleCompleted += ScheduleRefresh;
+        _room.RoomsChanged += ScheduleRefresh;
         _server.TextReceived += (alias, _, text) => Dispatcher.UIThread.Post(() => OnTextReceived(alias, text));
         _server.FileReceived += (alias, fileName, _, savedPath) => Dispatcher.UIThread.Post(() => OnFileReceived(alias, fileName, savedPath));
     }
@@ -76,6 +84,144 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         OwnInfoText = "启动失败(详见日志)";
         StatusText = $"启动失败: {message}";
+    }
+
+    // ============================ 刷新(事件合流,避免高频重建) ============================
+
+    private void ScheduleRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _refreshQueued, 1, 0) != 0) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            try { RefreshAll(); }
+            finally { Volatile.Write(ref _refreshQueued, 0); }
+        });
+    }
+
+    private void RefreshAll()
+    {
+        RefreshDevices();
+        RefreshRooms();
+    }
+
+    private string FormatLatency(string fingerprint)
+        => _latency.TryGetLatency(fingerprint, out var ms) ? $"{ms} ms" : "—";
+
+    private void RefreshDevices()
+    {
+        var records = _discovery.GetDevices();
+
+        for (var i = Devices.Count - 1; i >= 0; i--)
+        {
+            if (records.All(r => r.Fingerprint != Devices[i].Fingerprint))
+            {
+                Devices.RemoveAt(i);
+            }
+        }
+
+        foreach (var record in records)
+        {
+            var existing = Devices.FirstOrDefault(d => d.Fingerprint == record.Fingerprint);
+            if (existing is null)
+            {
+                var vm = new DeviceListItemViewModel(record) { LatencyText = FormatLatency(record.Fingerprint) };
+                Devices.Add(vm);
+            }
+            else
+            {
+                existing.Update(record);
+                existing.LatencyText = FormatLatency(record.Fingerprint);
+            }
+        }
+
+        DevicesHeader = $"附近设备 ({Devices.Count})";
+    }
+
+    private void RefreshRooms()
+    {
+        var summaries = _room.GetRoomSummaries();
+        var devices = _discovery.GetDevices();
+        var selectedCode = SelectedRoom?.Code;
+
+        Rooms.Clear();
+        foreach (var summary in summaries)
+        {
+            var nodes = devices.Count(d => d.ContainsRoom(summary.Code)) + 1; // + 本机
+            Rooms.Add(new RoomListItemViewModel(summary.Code, $"{summary.ItemCount} 个文件 · {nodes} 个节点"));
+        }
+        HasRooms = Rooms.Count > 0;
+
+        _updatingDetail = true;
+        try
+        {
+            SelectedRoom = selectedCode != null
+                ? Rooms.FirstOrDefault(r => r.Code == selectedCode)
+                : null;
+            if (SelectedRoom is null && Rooms.Count > 0) SelectedRoom = Rooms[0];
+        }
+        finally { _updatingDetail = false; }
+
+        RefreshRoomDetail();
+    }
+
+    partial void OnSelectedRoomChanged(RoomListItemViewModel? value)
+    {
+        if (!_updatingDetail) RefreshRoomDetail();
+    }
+
+    partial void OnSelectedMemberChanged(MemberListItemViewModel? value)
+    {
+        if (!_updatingDetail) RefreshRoomDetail();
+    }
+
+    private void RefreshRoomDetail()
+    {
+        var code = SelectedRoom?.Code;
+        if (code is null)
+        {
+            IsRoomSelected = false;
+            RoomCode = "";
+            Members.Clear();
+            TrayItems.Clear();
+            TrayHeader = "";
+            return;
+        }
+
+        IsRoomSelected = true;
+        RoomCode = code;
+
+        var selectedFp = SelectedMember?.Fingerprint; // null = 全部成员
+
+        _updatingDetail = true;
+        try
+        {
+            Members.Clear();
+            var all = new MemberListItemViewModel(null, "全部成员", "显示所有文件");
+            Members.Add(all);
+            Members.Add(new MemberListItemViewModel(_settings.Fingerprint, $"{_settings.Alias} (我)", "本机"));
+            foreach (var device in _discovery.GetDevices().Where(d => d.ContainsRoom(code)).OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase))
+            {
+                Members.Add(new MemberListItemViewModel(
+                    device.Fingerprint,
+                    device.Alias,
+                    $"{device.Endpoint} · {FormatLatency(device.Fingerprint)}"));
+            }
+
+            SelectedMember = Members.FirstOrDefault(m => m.Fingerprint == selectedFp) ?? all;
+
+            var items = _room.GetVisibleItems(code);
+            if (selectedFp != null) items = items.Where(i => i.OwnerFingerprint == selectedFp).ToList();
+
+            TrayItems.Clear();
+            foreach (var item in items)
+            {
+                TrayItems.Add(new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand));
+            }
+            TrayHeader = TrayItems.Count == 0
+                ? "托盘 (空)"
+                : $"托盘 ({TrayItems.Count}){(selectedFp != null ? " · 按成员筛选" : "")}";
+        }
+        finally { _updatingDetail = false; }
     }
 
     // ============================ 附近设备 / 文本 ============================
@@ -125,28 +271,6 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = $"昵称已保存为 {alias}(其他设备稍后可见)";
     }
 
-    private void RefreshDevices()
-    {
-        var records = _discovery.GetDevices();
-
-        for (var i = Devices.Count - 1; i >= 0; i--)
-        {
-            if (records.All(r => r.Fingerprint != Devices[i].Fingerprint))
-            {
-                Devices.RemoveAt(i);
-            }
-        }
-
-        foreach (var record in records)
-        {
-            var existing = Devices.FirstOrDefault(d => d.Fingerprint == record.Fingerprint);
-            if (existing is null) Devices.Add(new DeviceListItemViewModel(record));
-            else existing.Update(record);
-        }
-
-        DevicesHeader = $"附近设备 ({Devices.Count})";
-    }
-
     private void OnTextReceived(string alias, string text)
     {
         Messages.Add(MessageItemViewModel.Incoming(alias, text));
@@ -159,17 +283,15 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = $"收到文件 {fileName}";
     }
 
-    // ============================ 房间 / 托盘 ============================
+    // ============================ 房间 / 托盘(分布式) ============================
 
     [RelayCommand]
     private void CreateRoom()
     {
-        if (_room.IsInRoom) return;
         try
         {
-            _room.CreateRoom();
-            RefreshRoom();
-            StatusText = $"房间已创建,房间码 {_room.Code}";
+            var code = _room.CreateRoom(null);
+            StatusText = $"房间已创建: {code}";
         }
         catch (Exception ex)
         {
@@ -178,9 +300,8 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task JoinRoomAsync()
+    private void JoinRoom()
     {
-        if (_room.IsInRoom) return;
         var code = JoinCodeInput.Trim().ToUpperInvariant();
         if (code.Length != 8 || code.Any(c => c is not ((>= 'A' and <= 'Z') or (>= '0' and <= '9'))))
         {
@@ -190,10 +311,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            StatusText = $"正在加入房间 {code}…";
-            await _room.JoinRoomAsync(code);
+            _room.CreateRoom(code);
+            var peers = _discovery.GetDevices().Count(d => d.ContainsRoom(code));
+            StatusText = peers > 0
+                ? $"已加入房间 {code}(当前 {peers} 个其他在线节点)"
+                : $"已加入房间 {code}(暂无其他在线节点,房间已保留在本地)";
             JoinCodeInput = "";
-            StatusText = $"已加入房间 {code}";
         }
         catch (Exception ex)
         {
@@ -202,23 +325,26 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task LeaveRoomAsync()
+    private void DeleteRoom()
     {
+        var code = SelectedRoom?.Code;
+        if (code is null) return;
         try
         {
-            await _room.LeaveRoomAsync();
-            StatusText = "已离开房间";
+            _room.DeleteRoom(code);
+            StatusText = $"已从本机删除房间 {code}(其他节点不受影响)";
         }
         catch (Exception ex)
         {
-            StatusText = "离开房间失败: " + ex.Message;
+            StatusText = "删除房间失败: " + ex.Message;
         }
     }
 
     [RelayCommand]
     private async Task AddFilesAsync()
     {
-        if (!_room.IsInRoom) return;
+        var code = SelectedRoom?.Code;
+        if (code is null) return;
         var picker = PickFilesAsync;
         if (picker is null) return;
 
@@ -227,8 +353,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            await _room.AddFilesAsync(files);
-            StatusText = $"已放入 {files.Count} 个文件";
+            _room.AddFiles(code, files);
+            StatusText = $"已放入 {files.Count} 个文件并同步到房间节点";
         }
         catch (Exception ex)
         {
@@ -253,7 +379,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
         try
         {
-            await _room.DownloadItemAsync(item.Id, target);
+            await _room.DownloadItemAsync(item.RoomCode, item.Id, target);
             StatusText = $"已下载: {target}";
         }
         catch (Exception ex)
@@ -263,42 +389,17 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task DeleteItemAsync(TrayItemViewModel? item)
+    private void DeleteItem(TrayItemViewModel? item)
     {
         if (item is null) return;
         try
         {
-            await _room.RemoveItemAsync(item.Id);
-            StatusText = $"已移除 {item.FileName}";
+            _room.RemoveItem(item.RoomCode, item.Id);
+            StatusText = $"已移除 {item.FileName} 并同步到房间节点";
         }
         catch (Exception ex)
         {
             StatusText = "移除失败: " + ex.Message;
-        }
-    }
-
-    private void RefreshRoom()
-    {
-        var state = _room.State;
-        if (!_room.IsInRoom || state is null)
-        {
-            IsInRoom = false;
-            RoomCode = "";
-            RoleText = "";
-            MemberSummary = "";
-            TrayItems.Clear();
-            return;
-        }
-
-        IsInRoom = true;
-        RoomCode = state.Code;
-        RoleText = _room.Role == RoomRole.Host ? "房主" : "成员";
-        MemberSummary = "成员: " + string.Join("、", state.Members
-            .Select(m => m.Alias + (m.Fingerprint == state.HostFingerprint ? "(房主)" : "")));
-        TrayItems.Clear();
-        foreach (var item in state.Tray)
-        {
-            TrayItems.Add(new TrayItemViewModel(item, _settings.Fingerprint, DownloadItemCommand, DeleteItemCommand));
         }
     }
 }

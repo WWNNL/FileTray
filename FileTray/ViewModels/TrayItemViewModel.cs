@@ -9,6 +9,7 @@ public partial class TrayItemViewModel : ViewModelBase
 {
     public string Id { get; }
     public string FilePath { get; }
+    public string RoomCode { get; }
     public bool IsMine { get; }
 
     [ObservableProperty] private string _fileName = "";
@@ -17,10 +18,11 @@ public partial class TrayItemViewModel : ViewModelBase
     public IRelayCommand DownloadCommand { get; }
     public IRelayCommand DeleteCommand { get; }
 
-    public TrayItemViewModel(TrayItemDto item, string selfFingerprint, IRelayCommand downloadCommand, IRelayCommand deleteCommand)
+    public TrayItemViewModel(TrayItemDto item, string selfFingerprint, string roomCode, IRelayCommand downloadCommand, IRelayCommand deleteCommand)
     {
         Id = item.Id;
         FilePath = item.FilePath;
+        RoomCode = roomCode;
         IsMine = item.OwnerFingerprint == selfFingerprint;
         _fileName = item.FileName;
         _metaLine = $"{item.OwnerAlias}{(IsMine ? "(我)" : "")} · {FormatSize(item.FileSize)} · {FormatTime(item.AddedAt)}";

@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using FileTray.Models;
 using FileTray.ViewModels;
 
 namespace FileTray.Services;
@@ -16,6 +15,7 @@ public sealed class AppServices
     public RoomService Room { get; private set; } = null!;
     public HttpApiService Server { get; private set; } = null!;
     public TransferService Transfer { get; private set; } = null!;
+    public LatencyService Latency { get; private set; } = null!;
     public MainWindowViewModel MainVm { get; private set; } = null!;
 
     private AppServices()
@@ -37,11 +37,12 @@ public sealed class AppServices
         }
 
         Discovery = new DiscoveryService();
-        Room = new RoomService(Settings, Discovery, () => Server.Port);
-        Server = new HttpApiService(Discovery, Room, () => Transfer?.SelfInfo() ?? new DeviceInfoDto());
-        Transfer = new TransferService(Settings, Server, () => Room.Code);
+        Room = new RoomService(Settings, Discovery);
+        Server = new HttpApiService(Discovery, Room, () => Transfer?.SelfInfo() ?? new Models.DeviceInfoDto());
+        Transfer = new TransferService(Settings, Server, () => Room.RoomCodes);
+        Latency = new LatencyService(Discovery);
 
-        MainVm = new MainWindowViewModel(Settings, Discovery, Server, Room, Transfer);
+        MainVm = new MainWindowViewModel(Settings, Discovery, Server, Room, Transfer, Latency);
     }
 
     public async Task StartupAsync()
@@ -53,13 +54,15 @@ public sealed class AppServices
                 aliasProvider: () => Settings.Alias,
                 fingerprintProvider: () => Settings.Fingerprint,
                 portProvider: () => Server.Port,
-                roomProvider: () => Room.Code);
+                roomCodesProvider: () => Room.RoomCodes);
+            Room.Start();
+            Latency.Start();
 
             Log.Info($"启动完成: 别名={Settings.Alias} 指纹={Short(Settings.Fingerprint)} HTTP端口={Server.Port}");
 
             Avalonia.Threading.Dispatcher.UIThread.Post(() => MainVm.NotifyStarted(Server.Port));
 
-            await RunCliActionsAsync().ConfigureAwait(false);
+            RunCliActions();
         }
         catch (Exception ex)
         {
@@ -68,61 +71,39 @@ public sealed class AppServices
         }
     }
 
-    private async Task RunCliActionsAsync()
+    private void RunCliActions()
     {
-        if (CliOptions.CreateRoomCode != null)
+        try
         {
-            await Task.Delay(500).ConfigureAwait(false);
-            if (!Room.IsInRoom)
+            var roomCode = CliOptions.CreateRoomCode != null
+                ? Room.CreateRoom(CliOptions.CreateRoomCode)
+                : CliOptions.JoinRoomCode != null
+                    ? Room.CreateRoom(CliOptions.JoinRoomCode)
+                    : null;
+
+            if (roomCode != null)
             {
-                Room.CreateRoom(CliOptions.CreateRoomCode);
-                Log.Info($"CLI: 已创建房间 {CliOptions.CreateRoomCode}");
+                Log.Info($"CLI: 已在本地维护房间 {roomCode}");
+                if (CliOptions.AddFiles.Count > 0)
+                {
+                    Room.AddFiles(roomCode, CliOptions.AddFiles);
+                }
+            }
+            else if (CliOptions.AddFiles.Count > 0)
+            {
+                Log.Warn("CLI: 未指定 --create-room/--join-room,忽略 --add-file");
             }
         }
-        else if (CliOptions.JoinRoomCode != null)
+        catch (Exception ex)
         {
-            for (var attempt = 1; attempt <= 15 && !Room.IsInRoom; attempt++)
-            {
-                await Task.Delay(1000).ConfigureAwait(false);
-                try
-                {
-                    await Room.JoinRoomAsync(CliOptions.JoinRoomCode).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    Log.Info($"CLI: 加入房间尝试 {attempt} 失败: {ex.Message}");
-                }
-            }
-        }
-
-        if (CliOptions.AddFiles.Count > 0)
-        {
-            for (var i = 0; i < 40 && !Room.IsInRoom; i++)
-            {
-                await Task.Delay(500).ConfigureAwait(false);
-            }
-
-            if (Room.IsInRoom)
-            {
-                try
-                {
-                    await Room.AddFilesAsync(CliOptions.AddFiles).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"CLI: 添加文件失败: {ex.Message}");
-                }
-            }
-            else
-            {
-                Log.Warn("CLI: 未加入房间,跳过添加文件");
-            }
+            Log.Error($"CLI: 房间操作失败: {ex.Message}");
         }
     }
 
     public void Shutdown()
     {
         try { Room?.Shutdown(); } catch (Exception ex) { Log.Warn($"退出清理(房间)失败: {ex.Message}"); }
+        try { Latency?.Dispose(); } catch { }
         try { Discovery?.Dispose(); } catch { }
         try { Server?.Dispose(); } catch { }
         Log.Info("========== FileTray 已退出 ==========");

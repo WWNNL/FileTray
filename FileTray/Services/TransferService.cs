@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using FileTray.Models;
@@ -13,13 +14,13 @@ public sealed class TransferService
 {
     private readonly SettingsService _settings;
     private readonly HttpApiService _server;
-    private readonly Func<string?> _roomCodeProvider;
+    private readonly Func<IReadOnlyList<string>> _roomCodesProvider;
 
-    public TransferService(SettingsService settings, HttpApiService server, Func<string?> roomCodeProvider)
+    public TransferService(SettingsService settings, HttpApiService server, Func<IReadOnlyList<string>> roomCodesProvider)
     {
         _settings = settings;
         _server = server;
-        _roomCodeProvider = roomCodeProvider;
+        _roomCodesProvider = roomCodesProvider;
     }
 
     public DeviceInfoDto SelfInfo() => new()
@@ -34,7 +35,7 @@ public sealed class TransferService
         Download = false,
         Announce = false,
         App = "filetray",
-        Room = _roomCodeProvider(),
+        Rooms = _roomCodesProvider().ToList(),
     };
 
     public async Task SendTextAsync(DeviceRecord target, string text)

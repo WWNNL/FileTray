@@ -13,6 +13,7 @@ public partial class DeviceListItemViewModel : ViewModelBase
     [ObservableProperty] private string _alias = "";
     [ObservableProperty] private string _endpoint = "";
     [ObservableProperty] private string _roomBadge = "";
+    [ObservableProperty] private string _latencyText = "—";
     [ObservableProperty] private bool _hasRoom;
 
     public DeviceListItemViewModel(DeviceRecord record)
@@ -26,7 +27,7 @@ public partial class DeviceListItemViewModel : ViewModelBase
         Record = record;
         Alias = record.Alias;
         Endpoint = record.Endpoint;
-        RoomBadge = string.IsNullOrEmpty(record.Room) ? "" : $"房间 {record.Room}";
-        HasRoom = !string.IsNullOrEmpty(record.Room);
+        RoomBadge = record.Rooms.Count > 0 ? "房间 " + string.Join("、", record.Rooms) : "";
+        HasRoom = record.Rooms.Count > 0;
     }
 }

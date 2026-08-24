@@ -27,7 +27,7 @@ public sealed class TransferSession
 /// <summary>
 /// 内嵌 HTTP 服务(Kestrel):
 /// - LocalSend v2 兼容 API:info / register / prepare-upload / upload / cancel
-/// - FileTray 房间扩展 API:room join/update/tray add/remove/leave、文件按需下载
+/// - FileTray 分布式 API:room/sync(状态交换)、ping(延迟检测)、file(托盘文件下载)
 /// MVP 阶段仅使用 HTTP(不启用 TLS),收到传输请求一律自动接受。
 /// </summary>
 public sealed class HttpApiService : IDisposable
@@ -170,45 +170,29 @@ public sealed class HttpApiService : IDisposable
             return Results.NoContent();
         });
 
-        // ================= FileTray 房间扩展 =================
+        // ================= FileTray 分布式房间 =================
 
+        // 延迟检测端点:立即返回,客户端测 RTT
+        app.MapGet("/api/filetray/v1/ping", () => Results.Ok("pong"));
+
+        // 节点间状态交换:合并对方状态,返回自己的完整状态(条目 + 墓碑)
+        app.MapPost("/api/filetray/v1/room/sync", (RoomSyncDto body) =>
+        {
+            var response = _room.MergeSync(body);
+            return response is null ? Results.NotFound() : Results.Json(response, Http.Json);
+        });
+
+        // 本地房间状态(调试/联调用)
         app.MapGet("/api/filetray/v1/room/{code}", (string code) =>
-            _room.IsHosting(code) ? Results.Json(_room.Snapshot(), Http.Json) : Results.NotFound());
-
-        app.MapPost("/api/filetray/v1/room/join", (RoomJoinRequestDto body, HttpContext ctx) =>
         {
-            var state = _room.TryHostJoin(body, ctx.Connection.RemoteIpAddress);
+            var state = _room.GetLocalState(code);
             return state is null ? Results.NotFound() : Results.Json(state, Http.Json);
         });
 
-        app.MapPost("/api/filetray/v1/room/update", (RoomStateDto body) =>
-        {
-            _room.ApplyUpdate(body);
-            return Results.NoContent();
-        });
-
-        app.MapPost("/api/filetray/v1/room/tray/add", (TrayAddRequestDto body) =>
-        {
-            var state = _room.HostAddTray(body);
-            return state is null ? Results.NotFound() : Results.Json(state, Http.Json);
-        });
-
-        app.MapPost("/api/filetray/v1/room/tray/remove", (TrayRemoveRequestDto body) =>
-        {
-            var state = _room.HostRemoveTray(body);
-            return state is null ? Results.NotFound() : Results.Json(state, Http.Json);
-        });
-
-        app.MapPost("/api/filetray/v1/room/leave", (RoomLeaveRequestDto body) =>
-        {
-            _room.HostLeave(body);
-            return Results.NoContent();
-        });
-
-        // 只允许下载确实在托盘里的文件
+        // 只允许下载本机放入该房间托盘的文件
         app.MapGet("/api/filetray/v1/file", (string path, string code) =>
         {
-            var resolved = _room.ResolveTrayFile(path, code);
+            var resolved = _room.ValidateOwnFile(path, code);
             return resolved is null
                 ? Results.NotFound()
                 : Results.File(resolved, "application/octet-stream", Path.GetFileName(resolved));

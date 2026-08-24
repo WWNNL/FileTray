@@ -4,7 +4,7 @@ namespace FileTray.Models;
 
 /// <summary>
 /// 设备信息,对应 LocalSend 协议 v2 的发现/注册报文。
-/// 在 LocalSend 字段之外扩展了 App(标记 FileTray)与 Room(当前承载的房间码),其他客户端会忽略未知字段。
+/// 在 LocalSend 字段之外扩展了 App(标记 FileTray)与 Rooms(本节点维护的房间码列表),其他客户端会忽略未知字段。
 /// </summary>
 public class DeviceInfoDto
 {
@@ -18,7 +18,7 @@ public class DeviceInfoDto
     public bool Download { get; set; }
     public bool Announce { get; set; }
     public string? App { get; set; }
-    public string? Room { get; set; }
+    public List<string> Rooms { get; set; } = new();
 }
 
 public class FileMetaDto

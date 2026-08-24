@@ -3,12 +3,12 @@
         xmlns:vm="using:FileTray.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="560"
+        mc:Ignorable="d" d:DesignWidth="860" d:DesignHeight="600"
         x:Class="FileTray.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
         Title="FileTray — 局域网文件托盘"
-        Width="800" Height="620"
+        Width="860" Height="640"
         WindowStartupLocation="CenterScreen">
 
     <Grid RowDefinitions="Auto,*,Auto" Margin="14">
@@ -20,7 +20,7 @@
 
         <TabControl Grid.Row="1" Margin="0,10,0,0">
             <TabItem Header="附近设备">
-                <Grid ColumnDefinitions="230,*" Margin="0,10,0,0">
+                <Grid ColumnDefinitions="250,*" Margin="0,10,0,0">
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
                         <TextBlock Grid.Row="0" Text="{Binding DevicesHeader}" FontWeight="SemiBold"/>
                         <ListBox Grid.Row="1" Margin="0,6,0,0" ItemsSource="{Binding Devices}"
@@ -30,6 +30,7 @@
                                     <StackPanel Margin="4" Spacing="2">
                                         <TextBlock Text="{Binding Alias}" FontWeight="SemiBold"/>
                                         <TextBlock Text="{Binding Endpoint}" FontSize="11" Opacity="0.65"/>
+                                        <TextBlock Text="{Binding LatencyText}" FontSize="11" Opacity="0.65"/>
                                         <TextBlock Text="{Binding RoomBadge}" FontSize="11" Opacity="0.65"
                                                    IsVisible="{Binding HasRoom}"/>
                                     </StackPanel>
@@ -59,46 +60,70 @@
             </TabItem>
 
             <TabItem Header="房间">
-                <Grid Margin="0,10,0,0">
-                    <StackPanel IsVisible="{Binding !IsInRoom}" Spacing="12" VerticalAlignment="Top">
-                        <Button Content="创建房间" Command="{Binding CreateRoomCommand}"
-                                HorizontalAlignment="Left" Padding="20,6"/>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBox Width="170" Text="{Binding JoinCodeInput}" PlaceholderText="8 位房间码"/>
-                            <Button Content="加入房间" Command="{Binding JoinRoomCommand}" Padding="14,4"/>
-                        </StackPanel>
-                        <TextBlock MaxWidth="560" TextWrapping="Wrap" Opacity="0.6"
-                                   Text="创建房间会生成 8 位随机房间码(大写字母 + 数字);同一局域网内输入相同房间码即可加入。房间成员共享一个文件托盘:任何人放入的文件(只记录来源成员与该成员机器上的路径)以及删除操作,都会实时同步到所有成员;需要文件本体时再从所有者机器下载。"/>
+                <Grid RowDefinitions="Auto,*" Margin="0,10,0,0">
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+                        <Button Content="创建房间" Command="{Binding CreateRoomCommand}" Padding="14,4"/>
+                        <TextBox Width="160" Text="{Binding JoinCodeInput}" PlaceholderText="8 位房间码"/>
+                        <Button Content="加入房间" Command="{Binding JoinRoomCommand}" Padding="14,4"/>
                     </StackPanel>
 
-                    <Grid IsVisible="{Binding IsInRoom}" RowDefinitions="Auto,Auto,Auto,*" Margin="0,2,0,0">
-                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="14">
-                            <TextBlock Text="房间码" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding RoomCode}" FontFamily="Consolas,Monospace" FontSize="26" FontWeight="Bold"/>
-                            <Button Content="复制" Click="OnCopyRoomCode" Padding="10,2" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding RoleText}" VerticalAlignment="Center" Opacity="0.7"/>
-                        </StackPanel>
-                        <TextBlock Grid.Row="1" Text="{Binding MemberSummary}" Margin="0,6,0,0" Opacity="0.7" TextWrapping="Wrap"/>
-                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" Margin="0,10">
-                            <Button Content="添加文件" Command="{Binding AddFilesCommand}" Padding="14,4"/>
-                            <Button Content="离开房间" Command="{Binding LeaveRoomCommand}" Padding="14,4"/>
-                        </StackPanel>
-                        <ListBox Grid.Row="3" ItemsSource="{Binding TrayItems}">
+                    <TextBlock Grid.Row="1" IsVisible="{Binding !HasRooms}" Margin="0,20,0,0"
+                               MaxWidth="600" TextWrapping="Wrap" Opacity="0.6"
+                               Text="房间没有房主,所有节点对等:创建或加入同一房间码的设备会在局域网内互相发现并同步托盘。房间保存在本机,即使完全离线也不会丢失,只有手动删除才会移除;每台设备周期性心跳广播并检测相互延迟。"/>
+
+                    <Grid Grid.Row="1" IsVisible="{Binding HasRooms}" ColumnDefinitions="210,*" Margin="0,10,0,0">
+                        <ListBox Grid.Column="0" ItemsSource="{Binding Rooms}" SelectedItem="{Binding SelectedRoom}">
                             <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="vm:TrayItemViewModel">
-                                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="2,5">
-                                        <StackPanel Grid.Column="0" Spacing="1" ToolTip.Tip="{Binding FilePath}">
-                                            <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
-                                            <TextBlock Text="{Binding MetaLine}" FontSize="11" Opacity="0.65"/>
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="下载" Margin="8,0,0,0" Padding="12,3"
-                                                Command="{Binding DownloadCommand}" CommandParameter="{Binding}"/>
-                                        <Button Grid.Column="2" Content="删除" Margin="6,0,0,0" Padding="12,3"
-                                                Command="{Binding DeleteCommand}" CommandParameter="{Binding}"/>
-                                    </Grid>
+                                <DataTemplate x:DataType="vm:RoomListItemViewModel">
+                                    <StackPanel Margin="4" Spacing="2">
+                                        <TextBlock Text="{Binding Code}" FontFamily="Consolas,Monospace" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding SummaryText}" FontSize="11" Opacity="0.65"/>
+                                    </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+
+                        <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="14,0,0,0"
+                              IsVisible="{Binding IsRoomSelected}">
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+                                <TextBlock Text="房间码" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding RoomCode}" FontFamily="Consolas,Monospace" FontSize="24" FontWeight="Bold"/>
+                                <Button Content="复制" Click="OnCopyRoomCode" Padding="10,2" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                                <Button Content="添加文件" Command="{Binding AddFilesCommand}" Padding="12,4"/>
+                                <Button Content="删除房间" Command="{Binding DeleteRoomCommand}" Padding="12,4"/>
+                            </StackPanel>
+                            <ListBox Grid.Row="2" Margin="0,10,0,0" MaxHeight="150" MinHeight="60"
+                                     ItemsSource="{Binding Members}" SelectedItem="{Binding SelectedMember}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:MemberListItemViewModel">
+                                        <StackPanel Margin="4,1" Spacing="1">
+                                            <TextBlock Text="{Binding DisplayName}"/>
+                                            <TextBlock Text="{Binding DetailText}" FontSize="11" Opacity="0.65"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock Grid.Row="3" Text="{Binding TrayHeader}" FontWeight="SemiBold" Margin="0,10,0,0"/>
+                            <ListBox Grid.Row="4" Margin="0,6,0,0" ItemsSource="{Binding TrayItems}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:TrayItemViewModel">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" Margin="2,5">
+                                            <StackPanel Grid.Column="0" Spacing="1" ToolTip.Tip="{Binding FilePath}">
+                                                <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding MetaLine}" FontSize="11" Opacity="0.65"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="下载" Margin="8,0,0,0" Padding="12,3"
+                                                    Command="{Binding DownloadCommand}" CommandParameter="{Binding}"
+                                                    IsVisible="{Binding !IsMine}"/>
+                                            <Button Grid.Column="2" Content="删除" Margin="6,0,0,0" Padding="12,3"
+                                                    Command="{Binding DeleteCommand}" CommandParameter="{Binding}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
                     </Grid>
                 </Grid>
             </TabItem>

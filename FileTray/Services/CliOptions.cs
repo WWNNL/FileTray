@@ -6,9 +6,9 @@ namespace FileTray.Services;
 /// 命令行参数(主要用于自动化测试与本机双实例联调):
 /// --alias NAME          指定昵称
 /// --data-dir PATH       覆盖数据目录(默认 %APPDATA%\FileTray)
-/// --create-room CODE    启动后以指定房间码创建房间
-/// --join-room CODE      启动后加入指定房间
-/// --add-file PATH       加入房间后把文件放入托盘(可多次)
+/// --create-room CODE    启动后在本地维护指定房间码(分布式:创建与加入等效)
+/// --join-room CODE      同上(加入房间 = 本地维护该房间码)
+/// --add-file PATH       维护房间后把文件放入托盘(可多次)
 /// </summary>
 public static class CliOptions
 {
