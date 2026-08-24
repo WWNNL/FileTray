@@ -1,0 +1,109 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FileTray.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="560"
+        x:Class="FileTray.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="FileTray — 局域网文件托盘"
+        Width="800" Height="620"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid RowDefinitions="Auto,*,Auto" Margin="14">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
+            <TextBlock Grid.Column="0" Text="{Binding OwnInfoText}" VerticalAlignment="Center" Opacity="0.75"/>
+            <TextBox Grid.Column="1" Width="150" Text="{Binding AliasInput}" PlaceholderText="昵称" Margin="0,0,8,0"/>
+            <Button Grid.Column="2" Content="保存昵称" Command="{Binding SaveAliasCommand}" Padding="12,4"/>
+        </Grid>
+
+        <TabControl Grid.Row="1" Margin="0,10,0,0">
+            <TabItem Header="附近设备">
+                <Grid ColumnDefinitions="230,*" Margin="0,10,0,0">
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+                        <TextBlock Grid.Row="0" Text="{Binding DevicesHeader}" FontWeight="SemiBold"/>
+                        <ListBox Grid.Row="1" Margin="0,6,0,0" ItemsSource="{Binding Devices}"
+                                 SelectedItem="{Binding SelectedDevice}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:DeviceListItemViewModel">
+                                    <StackPanel Margin="4" Spacing="2">
+                                        <TextBlock Text="{Binding Alias}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Endpoint}" FontSize="11" Opacity="0.65"/>
+                                        <TextBlock Text="{Binding RoomBadge}" FontSize="11" Opacity="0.65"
+                                                   IsVisible="{Binding HasRoom}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,Auto,*" Margin="14,0,0,0">
+                        <TextBlock Grid.Row="0" Text="发送文本" FontWeight="SemiBold"/>
+                        <TextBox Grid.Row="1" Margin="0,6,0,0" Height="96" AcceptsReturn="True"
+                                 Text="{Binding MessageInput}" PlaceholderText="输入要发送给所选设备的文本…"/>
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8">
+                            <Button Content="发送" Command="{Binding SendTextCommand}" Padding="20,4"/>
+                        </StackPanel>
+                        <ListBox Grid.Row="3" ItemsSource="{Binding Messages}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:MessageItemViewModel">
+                                    <StackPanel Margin="4,2" Spacing="1">
+                                        <TextBlock Text="{Binding Line}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding TimeText}" FontSize="10" Opacity="0.5"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="房间">
+                <Grid Margin="0,10,0,0">
+                    <StackPanel IsVisible="{Binding !IsInRoom}" Spacing="12" VerticalAlignment="Top">
+                        <Button Content="创建房间" Command="{Binding CreateRoomCommand}"
+                                HorizontalAlignment="Left" Padding="20,6"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox Width="170" Text="{Binding JoinCodeInput}" PlaceholderText="8 位房间码"/>
+                            <Button Content="加入房间" Command="{Binding JoinRoomCommand}" Padding="14,4"/>
+                        </StackPanel>
+                        <TextBlock MaxWidth="560" TextWrapping="Wrap" Opacity="0.6"
+                                   Text="创建房间会生成 8 位随机房间码(大写字母 + 数字);同一局域网内输入相同房间码即可加入。房间成员共享一个文件托盘:任何人放入的文件(只记录来源成员与该成员机器上的路径)以及删除操作,都会实时同步到所有成员;需要文件本体时再从所有者机器下载。"/>
+                    </StackPanel>
+
+                    <Grid IsVisible="{Binding IsInRoom}" RowDefinitions="Auto,Auto,Auto,*" Margin="0,2,0,0">
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="14">
+                            <TextBlock Text="房间码" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding RoomCode}" FontFamily="Consolas,Monospace" FontSize="26" FontWeight="Bold"/>
+                            <Button Content="复制" Click="OnCopyRoomCode" Padding="10,2" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding RoleText}" VerticalAlignment="Center" Opacity="0.7"/>
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Text="{Binding MemberSummary}" Margin="0,6,0,0" Opacity="0.7" TextWrapping="Wrap"/>
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" Margin="0,10">
+                            <Button Content="添加文件" Command="{Binding AddFilesCommand}" Padding="14,4"/>
+                            <Button Content="离开房间" Command="{Binding LeaveRoomCommand}" Padding="14,4"/>
+                        </StackPanel>
+                        <ListBox Grid.Row="3" ItemsSource="{Binding TrayItems}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:TrayItemViewModel">
+                                    <Grid ColumnDefinitions="*,Auto,Auto" Margin="2,5">
+                                        <StackPanel Grid.Column="0" Spacing="1" ToolTip.Tip="{Binding FilePath}">
+                                            <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding MetaLine}" FontSize="11" Opacity="0.65"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="下载" Margin="8,0,0,0" Padding="12,3"
+                                                Command="{Binding DownloadCommand}" CommandParameter="{Binding}"/>
+                                        <Button Grid.Column="2" Content="删除" Margin="6,0,0,0" Padding="12,3"
+                                                Command="{Binding DeleteCommand}" CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="2" Text="{Binding StatusText}" Margin="0,10,0,0" Opacity="0.75" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

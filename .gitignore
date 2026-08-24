@@ -1,0 +1,33 @@
+# 基础 .gitignore 模板 (Avalonia/C#)
+# 用户特定文件
+*.suo
+*.user
+*.sln.docstates
+*.user
+*.ncb
+*.sdf
+.vs/
+
+# 编译输出
+[Dd]ebug/
+[Rr]elease/
+x64/
+[Bb]in/
+[Oo]bj/
+.obj-debug/
+.build-debug/
+.obj-release/
+.build-release/
+
+# VS Code 配置
+vs/
+vscode/
+
+# NuGet 缓存与构建产物
+nuget
+artifacts/
+node_modules
+
+# Avalonia 浏览器项目生成文件
+src/Browser/Avalonia.Browser.Blazor/wwwroot/*.js
+src/Browser/Avalonia.Browser.Blazor/webapp/package-lock.json
