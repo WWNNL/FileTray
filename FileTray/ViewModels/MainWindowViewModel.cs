@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,13 +23,17 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly LatencyService _latency;
 
     private int _refreshQueued;
-    private bool _updatingDetail;
+    private bool _suppressDetailRefresh;
+    private string? _pendingMemberFilter; // 成员筛选(指纹,null=全部),刷新后据此更新托盘视图
 
     /// <summary>由 MainWindow 在打开后注入的文件选择器(打开多个文件)。</summary>
     public Func<Task<IReadOnlyList<string>>>? PickFilesAsync { get; set; }
 
     /// <summary>由 MainWindow 在打开后注入的保存路径选择器。</summary>
     public Func<string, Task<string?>>? PickSaveFileAsync { get; set; }
+
+    /// <summary>由 MainWindow 注入:用户把文件拖入窗口时调用(路径列表)。</summary>
+    public Func<IReadOnlyList<string>, Task>? FilesDroppedAsync { get; set; }
 
     [ObservableProperty] private string _ownInfoText = "启动中…";
     [ObservableProperty] private string _aliasInput = "";
@@ -143,37 +148,61 @@ public partial class MainWindowViewModel : ViewModelBase
         var devices = _discovery.GetDevices();
         var selectedCode = SelectedRoom?.Code;
 
-        Rooms.Clear();
+        for (var i = Rooms.Count - 1; i >= 0; i--)
+        {
+            if (summaries.All(s => s.Code != Rooms[i].Code)) Rooms.RemoveAt(i);
+        }
+
         foreach (var summary in summaries)
         {
             var nodes = devices.Count(d => d.ContainsRoom(summary.Code)) + 1; // + 本机
-            Rooms.Add(new RoomListItemViewModel(summary.Code, $"{summary.ItemCount} 个文件 · {nodes} 个节点"));
+            var summaryText = $"{summary.ItemCount} 个文件 · {nodes} 个节点";
+            var existing = Rooms.FirstOrDefault(r => r.Code == summary.Code);
+            if (existing is null) Rooms.Add(new RoomListItemViewModel(summary.Code, summaryText));
+            else existing.SummaryText = summaryText;
         }
         HasRooms = Rooms.Count > 0;
 
-        _updatingDetail = true;
-        try
+        // 保持选中房间:实例优先复用,房间没了才回落到第一个
+        if (selectedCode != null && Rooms.Any(r => r.Code == selectedCode))
         {
-            SelectedRoom = selectedCode != null
-                ? Rooms.FirstOrDefault(r => r.Code == selectedCode)
-                : null;
-            if (SelectedRoom is null && Rooms.Count > 0) SelectedRoom = Rooms[0];
+            if (SelectedRoom?.Code != selectedCode)
+            {
+                _suppressDetailRefresh = true;
+                SelectedRoom = Rooms.First(r => r.Code == selectedCode);
+                _suppressDetailRefresh = false;
+            }
         }
-        finally { _updatingDetail = false; }
+        else if (SelectedRoom is null && Rooms.Count > 0)
+        {
+            _suppressDetailRefresh = true;
+            SelectedRoom = Rooms[0];
+            _suppressDetailRefresh = false;
+        }
 
         RefreshRoomDetail();
     }
 
     partial void OnSelectedRoomChanged(RoomListItemViewModel? value)
     {
-        if (!_updatingDetail) RefreshRoomDetail();
+        if (!_suppressDetailRefresh)
+        {
+            _pendingMemberFilter = null; // 切换房间时重置成员筛选
+            RefreshRoomDetail();
+        }
     }
 
     partial void OnSelectedMemberChanged(MemberListItemViewModel? value)
     {
-        if (!_updatingDetail) RefreshRoomDetail();
+        // 刷新期间程序性设置选中不触发筛选变化;用户手动点击才更新
+        if (!_suppressDetailRefresh && value is not null)
+        {
+            _pendingMemberFilter = value.Fingerprint;
+            RefreshTrayItems();
+        }
     }
 
+    /// <summary>刷新房间详情:成员列表做增量更新(复用同指纹实例,选中状态不丢失),托盘按当前筛选重建。</summary>
     private void RefreshRoomDetail()
     {
         var code = SelectedRoom?.Code;
@@ -190,38 +219,75 @@ public partial class MainWindowViewModel : ViewModelBase
         IsRoomSelected = true;
         RoomCode = code;
 
-        var selectedFp = SelectedMember?.Fingerprint; // null = 全部成员
+        // ---- 成员列表:增量更新,保持实例稳定(选中状态依赖实例相等) ----
+        var devices = _discovery.GetDevices().Where(d => d.ContainsRoom(code)).OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase).ToList();
 
-        _updatingDetail = true;
-        try
+        // 固定头两个条目:全部成员 / 本机
+        if (Members.Count == 0 || Members[0].Fingerprint != null)
         {
-            Members.Clear();
-            var all = new MemberListItemViewModel(null, "全部成员", "显示所有文件");
-            Members.Add(all);
-            Members.Add(new MemberListItemViewModel(_settings.Fingerprint, $"{_settings.Alias} (我)", "本机"));
-            foreach (var device in _discovery.GetDevices().Where(d => d.ContainsRoom(code)).OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase))
-            {
-                Members.Add(new MemberListItemViewModel(
-                    device.Fingerprint,
-                    device.Alias,
-                    $"{device.Endpoint} · {FormatLatency(device.Fingerprint)}"));
-            }
-
-            SelectedMember = Members.FirstOrDefault(m => m.Fingerprint == selectedFp) ?? all;
-
-            var items = _room.GetVisibleItems(code);
-            if (selectedFp != null) items = items.Where(i => i.OwnerFingerprint == selectedFp).ToList();
-
-            TrayItems.Clear();
-            foreach (var item in items)
-            {
-                TrayItems.Add(new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand));
-            }
-            TrayHeader = TrayItems.Count == 0
-                ? "托盘 (空)"
-                : $"托盘 ({TrayItems.Count}){(selectedFp != null ? " · 按成员筛选" : "")}";
+            Members.Insert(0, new MemberListItemViewModel(null, "全部成员", "显示所有文件"));
         }
-        finally { _updatingDetail = false; }
+        if (Members.Count < 2 || Members[1].Fingerprint != _settings.Fingerprint)
+        {
+            Members.Insert(1, new MemberListItemViewModel(_settings.Fingerprint, $"{_settings.Alias} (我)", "本机"));
+        }
+        Members[0].DetailText = "显示所有文件";
+        Members[1].DisplayName = $"{_settings.Alias} (我)";
+        Members[1].DetailText = "本机";
+
+        // 在线成员按指纹对齐:更新已有实例,移除离线者,追加新来者
+        var onlineFingerprints = devices.Select(d => d.Fingerprint).ToHashSet();
+        for (var i = Members.Count - 1; i >= 2; i--)
+        {
+            if (!onlineFingerprints.Contains(Members[i].Fingerprint!)) Members.RemoveAt(i);
+        }
+
+        foreach (var device in devices)
+        {
+            var existing = Members.FirstOrDefault(m => m.Fingerprint == device.Fingerprint);
+            if (existing is null)
+            {
+                Members.Add(new MemberListItemViewModel(device.Fingerprint, device.Alias, ""));
+            }
+            existing = Members.FirstOrDefault(m => m.Fingerprint == device.Fingerprint);
+            existing!.DisplayName = device.Alias;
+            existing!.DetailText = $"{device.Endpoint} · {FormatLatency(device.Fingerprint)}";
+        }
+
+        // 选中实例可能被移除(成员离线),回落到"全部成员"
+        if (SelectedMember is null || Members.All(m => !ReferenceEquals(m, SelectedMember)))
+        {
+            _suppressDetailRefresh = true;
+            SelectedMember = Members[0];
+            _suppressDetailRefresh = false;
+            _pendingMemberFilter = null;
+        }
+
+        RefreshTrayItems();
+    }
+
+    private void RefreshTrayItems()
+    {
+        var code = SelectedRoom?.Code;
+        if (code is null)
+        {
+            TrayItems.Clear();
+            TrayHeader = "";
+            return;
+        }
+
+        var filterFp = _pendingMemberFilter;
+        var items = _room.GetVisibleItems(code);
+        if (filterFp != null) items = items.Where(i => i.OwnerFingerprint == filterFp).ToList();
+
+        TrayItems.Clear();
+        foreach (var item in items)
+        {
+            TrayItems.Add(new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand));
+        }
+        TrayHeader = TrayItems.Count == 0
+            ? "托盘 (空)"
+            : $"托盘 ({TrayItems.Count}){(filterFp != null ? " · 按成员筛选" : "")}";
     }
 
     // ============================ 附近设备 / 文本 ============================
@@ -351,15 +417,41 @@ public partial class MainWindowViewModel : ViewModelBase
         var files = await picker();
         if (files.Count == 0) return;
 
+        await AddFilesToRoomAsync(code, files);
+    }
+
+    /// <summary>把一组本地文件放入指定房间的托盘(拖拽与文件选择器共用)。</summary>
+    private async Task AddFilesToRoomAsync(string code, IReadOnlyList<string> paths)
+    {
         try
         {
-            _room.AddFiles(code, files);
-            StatusText = $"已放入 {files.Count} 个文件并同步到房间节点";
+            await Task.Run(() => _room.AddFiles(code, paths));
+            StatusText = $"已放入 {paths.Count} 个文件并同步到房间节点";
         }
         catch (Exception ex)
         {
             StatusText = "放入托盘失败: " + ex.Message;
         }
+    }
+
+    /// <summary>拖拽入口:放入当前选中房间;未选中房间时提示。</summary>
+    public async Task HandleFilesDroppedAsync(IReadOnlyList<string> paths)
+    {
+        var code = SelectedRoom?.Code;
+        if (code is null)
+        {
+            StatusText = "请先创建或选择一个房间,再拖入文件";
+            return;
+        }
+
+        var valid = paths.Where(File.Exists).Select(p => p).ToList();
+        if (valid.Count == 0)
+        {
+            StatusText = "拖入的内容不包含本地文件";
+            return;
+        }
+
+        await AddFilesToRoomAsync(code, valid);
     }
 
     [RelayCommand]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -14,6 +15,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
     protected override void OnOpened(EventArgs e)
@@ -45,6 +48,38 @@ public partial class MainWindow : Window
                 });
                 return file?.TryGetLocalPath();
             };
+        }
+    }
+
+    /// <summary>拖拽悬停:携带文件时显示"可复制放置"光标。</summary>
+    private void OnWindowDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = e.DataTransfer.Contains(DataFormat.File)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>把拖入的本地文件放入当前选中房间的托盘。</summary>
+    private async void OnDrop(object? sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        var items = e.DataTransfer.TryGetFiles();
+        var paths = items?
+            .Select(f => f.TryGetLocalPath())
+            .Where(p => p != null)
+            .Select(p => p!)
+            .ToList() as IReadOnlyList<string>;
+
+        if (paths is { Count: > 0 })
+        {
+            await vm.HandleFilesDroppedAsync(paths);
+        }
+        else
+        {
+            vm.StatusText = "只支持拖入本地文件";
         }
     }
 
