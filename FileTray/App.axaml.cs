@@ -21,7 +21,11 @@ public partial class App : Application
         {
             var services = AppServices.Instance;
             services.Initialize();
-            desktop.MainWindow = new MainWindow { DataContext = services.MainVm };
+
+            var mainWindow = new MainWindow { DataContext = services.MainVm };
+            desktop.MainWindow = mainWindow;
+            // Avalonia 没有 ShutdownMode,窗口关闭时显式退出,不留后台进程
+            mainWindow.Closed += (_, _) => desktop.Shutdown();
             desktop.Exit += (_, _) => services.Shutdown();
             _ = Task.Run(() => services.StartupAsync());
         }

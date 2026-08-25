@@ -15,8 +15,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
-        AddHandler(DragDrop.DropEvent, OnDrop);
+        RootGrid.AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        RootGrid.AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        RootGrid.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
+        RootGrid.AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
     protected override void OnOpened(EventArgs e)
@@ -51,19 +53,48 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>拖拽悬停:携带文件时显示"可复制放置"光标。</summary>
-    private void OnWindowDragOver(object? sender, DragEventArgs e)
+    private static bool HasLocalFiles(DragEventArgs e)
+        => e.DataTransfer.Contains(DataFormat.File);
+
+    private void ShowDropOverlay(bool show)
     {
-        e.DragEffects = e.DataTransfer.Contains(DataFormat.File)
-            ? DragDropEffects.Copy
-            : DragDropEffects.None;
+        if (DataContext is MainWindowViewModel vm)
+        {
+            DropOverlayText.Text = show && vm.IsRoomSelected
+                ? $"松开鼠标把文件放入房间 {vm.RoomCode}"
+                : "松开鼠标把文件放入托盘";
+            DropOverlaySubText.Text = show && !vm.IsRoomSelected
+                ? "尚未选择房间,放入后会进入当前选中的房间"
+                : "";
+        }
+        DropOverlay.IsVisible = show;
+    }
+
+    private void OnDragEnter(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = HasLocalFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
+        ShowDropOverlay(HasLocalFiles(e));
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        // DragOver 持续触发,保持效果与遮罩状态即可
+        e.DragEffects = HasLocalFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnDragLeave(object? sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        ShowDropOverlay(false);
     }
 
     /// <summary>把拖入的本地文件放入当前选中房间的托盘。</summary>
     private async void OnDrop(object? sender, DragEventArgs e)
     {
         e.Handled = true;
+        ShowDropOverlay(false);
         if (DataContext is not MainWindowViewModel vm) return;
 
         var items = e.DataTransfer.TryGetFiles();

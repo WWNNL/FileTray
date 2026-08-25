@@ -13,8 +13,16 @@ sealed class Program
     public static void Main(string[] args)
     {
         CliOptions.Parse(args);
-        BuildAvaloniaApp()
-            .StartWithClassicDesktopLifetime(args);
+        try
+        {
+            BuildAvaloniaApp()
+                .StartWithClassicDesktopLifetime(args);
+        }
+        finally
+        {
+            // 后台线程(UDP 接收/定时器)不随窗口关闭自动停止,兜底确保进程退出无残留
+            Environment.Exit(0);
+        }
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.

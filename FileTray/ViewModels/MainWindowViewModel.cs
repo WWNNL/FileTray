@@ -24,6 +24,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private int _refreshQueued;
     private bool _suppressDetailRefresh;
+    private bool _applyingMemberSelection;
     private string? _pendingMemberFilter; // 成员筛选(指纹,null=全部),刷新后据此更新托盘视图
 
     /// <summary>由 MainWindow 在打开后注入的文件选择器(打开多个文件)。</summary>
@@ -48,7 +49,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private string _trayHeader = "";
 
     [ObservableProperty] private RoomListItemViewModel? _selectedRoom;
-    [ObservableProperty] private MemberListItemViewModel? _selectedMember;
 
     public ObservableCollection<DeviceListItemViewModel> Devices { get; } = new();
     public ObservableCollection<MessageItemViewModel> Messages { get; } = new();
@@ -192,17 +192,32 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    partial void OnSelectedMemberChanged(MemberListItemViewModel? value)
+    /// <summary>成员筛选按钮被点击(互斥单选):更新筛选并刷新托盘。</summary>
+    private void OnMemberSelected(MemberListItemViewModel member)
     {
-        // 刷新期间程序性设置选中不触发筛选变化;用户手动点击才更新
-        if (!_suppressDetailRefresh && value is not null)
+        if (_applyingMemberSelection)
         {
-            _pendingMemberFilter = value.Fingerprint;
-            RefreshTrayItems();
+            return; // 程序性刷新赋值,不是用户点击
         }
+
+        _applyingMemberSelection = true;
+        try
+        {
+            foreach (var m in Members)
+            {
+                m.IsSelected = ReferenceEquals(m, member);
+            }
+        }
+        finally
+        {
+            _applyingMemberSelection = false;
+        }
+
+        _pendingMemberFilter = member.Fingerprint;
+        RefreshTrayItems();
     }
 
-    /// <summary>刷新房间详情:成员列表做增量更新(复用同指纹实例,选中状态不丢失),托盘按当前筛选重建。</summary>
+    /// <summary>刷新房间详情:成员做增量更新(复用同指纹实例,选中状态不丢失),托盘按当前筛选刷新。</summary>
     private void RefreshRoomDetail()
     {
         var code = SelectedRoom?.Code;
@@ -219,23 +234,20 @@ public partial class MainWindowViewModel : ViewModelBase
         IsRoomSelected = true;
         RoomCode = code;
 
-        // ---- 成员列表:增量更新,保持实例稳定(选中状态依赖实例相等) ----
+        // ---- 成员:增量更新,实例稳定;显示文本 = 名称(延迟) ----
         var devices = _discovery.GetDevices().Where(d => d.ContainsRoom(code)).OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase).ToList();
 
-        // 固定头两个条目:全部成员 / 本机
         if (Members.Count == 0 || Members[0].Fingerprint != null)
         {
-            Members.Insert(0, new MemberListItemViewModel(null, "全部成员", "显示所有文件"));
+            Members.Insert(0, new MemberListItemViewModel(null, "全部", OnMemberSelected));
         }
         if (Members.Count < 2 || Members[1].Fingerprint != _settings.Fingerprint)
         {
-            Members.Insert(1, new MemberListItemViewModel(_settings.Fingerprint, $"{_settings.Alias} (我)", "本机"));
+            Members.Insert(1, new MemberListItemViewModel(_settings.Fingerprint, $"{_settings.Alias}(我)", OnMemberSelected));
         }
-        Members[0].DetailText = "显示所有文件";
-        Members[1].DisplayName = $"{_settings.Alias} (我)";
-        Members[1].DetailText = "本机";
+        Members[0].DisplayText = "全部";
+        Members[1].DisplayText = $"{_settings.Alias}(我)";
 
-        // 在线成员按指纹对齐:更新已有实例,移除离线者,追加新来者
         var onlineFingerprints = devices.Select(d => d.Fingerprint).ToHashSet();
         for (var i = Members.Count - 1; i >= 2; i--)
         {
@@ -247,20 +259,29 @@ public partial class MainWindowViewModel : ViewModelBase
             var existing = Members.FirstOrDefault(m => m.Fingerprint == device.Fingerprint);
             if (existing is null)
             {
-                Members.Add(new MemberListItemViewModel(device.Fingerprint, device.Alias, ""));
+                Members.Add(new MemberListItemViewModel(device.Fingerprint, "", OnMemberSelected));
             }
             existing = Members.FirstOrDefault(m => m.Fingerprint == device.Fingerprint);
-            existing!.DisplayName = device.Alias;
-            existing!.DetailText = $"{device.Endpoint} · {FormatLatency(device.Fingerprint)}";
+            existing!.DisplayText = $"{device.Alias}({FormatLatency(device.Fingerprint)})";
         }
 
-        // 选中实例可能被移除(成员离线),回落到"全部成员"
-        if (SelectedMember is null || Members.All(m => !ReferenceEquals(m, SelectedMember)))
+        // 选中的成员离线后回落到"全部"
+        if (_pendingMemberFilter != null && Members.All(m => m.Fingerprint != _pendingMemberFilter))
         {
-            _suppressDetailRefresh = true;
-            SelectedMember = Members[0];
-            _suppressDetailRefresh = false;
             _pendingMemberFilter = null;
+        }
+
+        _applyingMemberSelection = true;
+        try
+        {
+            foreach (var m in Members)
+            {
+                m.IsSelected = m.Fingerprint == _pendingMemberFilter || (m.Fingerprint == null && _pendingMemberFilter == null);
+            }
+        }
+        finally
+        {
+            _applyingMemberSelection = false;
         }
 
         RefreshTrayItems();

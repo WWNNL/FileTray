@@ -252,5 +252,22 @@ public sealed class HttpApiService : IDisposable
         }
     }
 
-    public void Dispose() => StopAsync().GetAwaiter().GetResult();
+    public void Dispose()
+    {
+        // 不能在 UI 线程同步等待:Kestrel 停止可能依赖线程池继续推进,
+        // 同步阻塞会死锁(窗口关了进程还赖着)。限时等待,超时即放弃优雅关闭,
+        // 进程退出由 Program.Main 的 Environment.Exit 兜底。
+        try
+        {
+            var task = StopAsync();
+            if (!task.Wait(TimeSpan.FromSeconds(2)))
+            {
+                Log.Warn("HTTP 服务停止超时(2 秒),放弃优雅关闭");
+            }
+        }
+        catch
+        {
+            // 尽力而为
+        }
+    }
 }
