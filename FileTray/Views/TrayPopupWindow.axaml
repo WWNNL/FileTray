@@ -11,16 +11,17 @@
         WindowDecorations="None"
         ShowInTaskbar="False"
         Topmost="{Binding PinTopmost}"
-        Background="#F2222222"
-        FontSize="12">
+        Background="{DynamicResource SystemRegionBrush}"
+        FontSize="12"
+        Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}">
 
     <!-- AllowDrop:拖文件入小窗直接放入当前房间 -->
     <Grid x:Name="PopupRoot" DragDrop.AllowDrop="True" RowDefinitions="Auto,*,Auto">
         <!-- 自绘标题栏:拖动移动 + 置顶切换 + 关闭 -->
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Background="#33FFFFFF"
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
               PointerPressed="OnHeaderPressed" Margin="0,0,0,2">
             <TextBlock Grid.Column="0" Text="FileTray" FontWeight="SemiBold" Margin="10,5,0,5"
-                       VerticalAlignment="Center" Foreground="#E0FFFFFF"/>
+                       VerticalAlignment="Center" Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
             <ToggleButton Grid.Column="1" Margin="4,3" Padding="8,2" FontSize="11"
                           Content="{Binding PinText}" IsChecked="{Binding PinTopmost, Mode=TwoWay}"/>
             <Button Grid.Column="2" Margin="0,3,6,3" Padding="8,2" FontSize="11"
@@ -87,10 +88,18 @@
                             <StackPanel Grid.Column="0" Spacing="1" ToolTip.Tip="{Binding FilePath}">
                                 <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" FontSize="12"/>
                                 <TextBlock Text="{Binding MetaLine}" FontSize="10" Opacity="0.6" TextTrimming="CharacterEllipsis"/>
+                                <!-- 下载进度:总大小未知时进度条转为不确定动画 -->
+                                <ProgressBar IsVisible="{Binding IsDownloading}" Height="5" Margin="0,3,0,0"
+                                             Minimum="0" Maximum="100"
+                                             Value="{Binding DownloadPercent}"
+                                             IsIndeterminate="{Binding DownloadIndeterminate}"/>
+                                <TextBlock IsVisible="{Binding IsDownloading}" Text="{Binding DownloadText}"
+                                           FontSize="10" Opacity="0.7"/>
                             </StackPanel>
                             <Button Grid.Column="1" Content="下载" Margin="6,0,0,0" Padding="10,2" FontSize="11"
                                     Command="{Binding $parent[Window].DataContext.DownloadItemCommand}" CommandParameter="{Binding}"
-                                    IsVisible="{Binding !IsMine}"/>
+                                    IsVisible="{Binding !IsMine}"
+                                    IsEnabled="{Binding !IsDownloading}"/>
                             <Button Grid.Column="2" Content="删除" Margin="4,0,0,0" Padding="10,2" FontSize="11"
                                     Command="{Binding $parent[Window].DataContext.DeleteItemCommand}" CommandParameter="{Binding}"/>
                         </Grid>
@@ -100,9 +109,19 @@
         </Grid>
 
         <!-- 左下角状态提示(与主窗口状态栏同源) -->
-        <Border Grid.Row="2" Background="#22000000" Padding="10,4">
+        <Border Grid.Row="2" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" Padding="10,4">
             <TextBlock Text="{Binding StatusText}" Opacity="0.75" TextTrimming="CharacterEllipsis"
                        ToolTip.Tip="{Binding StatusText}"/>
+        </Border>
+
+        <!-- 拖拽悬停提示遮罩:拖文件进小窗时出现 -->
+        <Border x:Name="DropOverlay" Grid.Row="0" Grid.RowSpan="3" IsVisible="False"
+                Background="#99222222" ZIndex="100" IsHitTestVisible="False">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <TextBlock Text="⤓" FontSize="36" HorizontalAlignment="Center" Foreground="White"/>
+                <TextBlock x:Name="DropOverlayText" FontSize="14" FontWeight="SemiBold"
+                           Foreground="White" HorizontalAlignment="Center"/>
+            </StackPanel>
         </Border>
     </Grid>
 </Window>

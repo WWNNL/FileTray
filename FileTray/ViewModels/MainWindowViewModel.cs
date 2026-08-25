@@ -27,6 +27,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _applyingMemberSelection;
     private string? _pendingMemberFilter; // 成员筛选(指纹,null=全部),刷新后据此更新托盘视图
 
+    /// <summary>下载进度真值(条目 Id → 进度);条目 VM 每次刷新重建,进度在重建时回填。</summary>
+    private readonly Dictionary<string, (int Percent, long Received, long Total)> _downloadProgress = new();
+    /// <summary>正在下载的条目 Id(防重复点击)。</summary>
+    private readonly HashSet<string> _downloadingItems = new();
+
     /// <summary>由 MainWindow 在打开后注入的文件选择器(打开多个文件)。</summary>
     public Func<Task<IReadOnlyList<string>>>? PickFilesAsync { get; set; }
 
@@ -357,7 +362,10 @@ public partial class MainWindowViewModel : ViewModelBase
         TrayItems.Clear();
         foreach (var item in items)
         {
-            TrayItems.Add(new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand));
+            var vm = new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand);
+            // 下载中的条目在刷新重建后回填进度显示
+            if (_downloadProgress.TryGetValue(item.Id, out var p)) vm.ApplyDownloadProgress(p.Percent, p.Received, p.Total);
+            TrayItems.Add(vm);
         }
         TrayHeader = TrayItems.Count == 0
             ? "托盘 (空)"
@@ -551,17 +559,63 @@ public partial class MainWindowViewModel : ViewModelBase
         await DownloadTrayItemAsync(item.RoomCode, item.Id, target);
     }
 
-    /// <summary>下载托盘文件到指定路径(主窗口与小窗共用)。</summary>
+    /// <summary>下载托盘文件到指定路径(主窗口与小窗共用);进度实时反映到条目 UI。</summary>
     public async Task DownloadTrayItemAsync(string roomCode, string itemId, string target)
     {
+        if (!_downloadingItems.Add(itemId))
+        {
+            StatusText = "该文件正在下载中…";
+            return;
+        }
+
+        _downloadProgress[itemId] = (0, 0, -1); // 先给不确定进度,拿到 Content-Length 后更新
+        ApplyItemProgress(itemId);
         try
         {
-            await _room.DownloadItemAsync(roomCode, itemId, target);
+            // Progress<T> 在 UI 线程构造,回调自动回到 UI 线程
+            var progress = new Progress<(int Percent, long Received, long Total)>(p =>
+            {
+                _downloadProgress[itemId] = p;
+                ApplyItemProgress(itemId);
+            });
+            await _room.DownloadItemAsync(roomCode, itemId, target, progress);
             StatusText = $"已下载: {target}";
         }
         catch (Exception ex)
         {
             StatusText = $"下载失败: {ex.Message}";
+        }
+        finally
+        {
+            _downloadingItems.Remove(itemId);
+            _downloadProgress.Remove(itemId);
+            ClearItemProgress(itemId);
+        }
+    }
+
+    /// <summary>把进度字典里的当前值写到列表中该条目的活实例上(主窗与小窗共享实例)。</summary>
+    private void ApplyItemProgress(string itemId)
+    {
+        if (!_downloadProgress.TryGetValue(itemId, out var p)) return;
+        foreach (var vm in TrayItems)
+        {
+            if (vm.Id == itemId)
+            {
+                vm.ApplyDownloadProgress(p.Percent, p.Received, p.Total);
+                return;
+            }
+        }
+    }
+
+    private void ClearItemProgress(string itemId)
+    {
+        foreach (var vm in TrayItems)
+        {
+            if (vm.Id == itemId)
+            {
+                vm.ClearDownloadProgress();
+                return;
+            }
         }
     }
 

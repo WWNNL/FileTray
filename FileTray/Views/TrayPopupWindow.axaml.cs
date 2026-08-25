@@ -24,7 +24,9 @@ public partial class TrayPopupWindow : Window
     public TrayPopupWindow()
     {
         InitializeComponent();
+        // DragOver 必须持续设置 DragEffects:未处理的 DragOver 会被平台判定为拒绝放置
         PopupRoot.AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
+        PopupRoot.AddHandler(DragDrop.DragOverEvent, OnDragOver);
         PopupRoot.AddHandler(DragDrop.DragLeaveEvent, OnDragLeave);
         PopupRoot.AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -163,25 +165,46 @@ public partial class TrayPopupWindow : Window
 
     // ============================ 拖入文件 ============================
 
+    private static bool HasLocalFiles(DragEventArgs e)
+        => e.DataTransfer.Contains(DataFormat.File);
+
+    private void ShowDropOverlay(bool show)
+    {
+        var code = _main?.RoomCode;
+        DropOverlayText.Text = string.IsNullOrEmpty(code)
+            ? "尚未选择房间,先在主窗口选择房间"
+            : $"松开鼠标把文件放入房间 {code}";
+        DropOverlay.IsVisible = show;
+    }
+
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
-        e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+        var has = HasLocalFiles(e);
+        e.DragEffects = has ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+        if (has) ShowDropOverlay(true);
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = HasLocalFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnDragLeave(object? sender, DragEventArgs e)
     {
         e.Handled = true;
+        ShowDropOverlay(false);
     }
 
     private async void OnDrop(object? sender, DragEventArgs e)
     {
         e.Handled = true;
+        ShowDropOverlay(false);
         if (_main is not { } main) return;
 
         var items = e.DataTransfer.TryGetFiles();
         var paths = items?
-            .OfType<IStorageFile>()
             .Select(f => f.TryGetLocalPath())
             .Where(p => p != null)
             .Select(p => p!)

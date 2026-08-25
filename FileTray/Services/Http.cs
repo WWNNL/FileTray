@@ -70,9 +70,44 @@ public static class Http
 
     public static async Task DownloadToFileAsync(string url, string savePath)
     {
+        await DownloadToFileAsync(url, savePath, null).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 下载到文件并周期性上报进度(约每 100ms 一次,读不到 Content-Length 时 total=-1、percent=-1)。
+    /// 进度回调在线程池线程触发,调用方自行切换 UI 线程。
+    /// </summary>
+    public static async Task DownloadToFileAsync(string url, string savePath, IProgress<(int Percent, long Received, long Total)>? progress)
+    {
         using var response = await LongClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
+
+        var total = response.Content.Headers.ContentLength ?? -1;
         await using var stream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await response.Content.CopyToAsync(stream).ConfigureAwait(false);
+        await using var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+
+        if (progress is null)
+        {
+            await source.CopyToAsync(stream).ConfigureAwait(false);
+            return;
+        }
+
+        var buffer = new byte[64 * 1024];
+        long received = 0;
+        var lastReport = DateTime.MinValue;
+        int read;
+        while ((read = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        {
+            await stream.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
+            received += read;
+
+            var now = DateTime.UtcNow;
+            if ((now - lastReport).TotalMilliseconds >= 100)
+            {
+                lastReport = now;
+                progress.Report((total > 0 ? (int)(received * 100 / total) : -1, received, total));
+            }
+        }
+        progress.Report((total > 0 ? 100 : -1, Math.Max(received, 0), total));
     }
 }

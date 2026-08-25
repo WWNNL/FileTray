@@ -303,9 +303,10 @@ public sealed class RoomService : IDisposable
     }
 
     /// <summary>
-    /// 从条目所有者的机器下载文件本体。
+    /// 从条目所有者的机器下载文件本体;progress 周期性上报下载进度。
     /// </summary>
-    public async Task DownloadItemAsync(string code, string itemId, string savePath)
+    public async Task DownloadItemAsync(string code, string itemId, string savePath,
+        IProgress<(int Percent, long Received, long Total)>? progress = null)
     {
         TrayItemDto? item;
         lock (_sync)
@@ -323,7 +324,7 @@ public sealed class RoomService : IDisposable
             ?? throw new InvalidOperationException($"文件所有者 {item.OwnerAlias} 当前不在线(未发现该设备)");
 
         var url = $"http://{owner.Ip}:{owner.Port}/api/filetray/v1/file?path={Uri.EscapeDataString(item.FilePath)}&code={Uri.EscapeDataString(code)}";
-        await Http.DownloadToFileAsync(url, savePath).ConfigureAwait(false);
+        await Http.DownloadToFileAsync(url, savePath, progress).ConfigureAwait(false);
         Log.Info($"下载完成: {item.FileName} 来自 {owner.Alias} → {savePath}");
     }
 

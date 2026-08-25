@@ -15,6 +15,14 @@ public partial class TrayItemViewModel : ViewModelBase
     [ObservableProperty] private string _fileName = "";
     [ObservableProperty] private string _metaLine = "";
 
+    /// <summary>正在下载(条目上显示进度条;下载结束恢复 false)。</summary>
+    [ObservableProperty] private bool _isDownloading;
+    /// <summary>下载百分比 0~100;总大小未知时为 -1(进度条转为不确定动画)。</summary>
+    [ObservableProperty] private int _downloadPercent = -1;
+    [ObservableProperty] private bool _downloadIndeterminate;
+    /// <summary>进度文本,如 "42% · 10.5 MB / 25.0 MB"。</summary>
+    [ObservableProperty] private string _downloadText = "";
+
     public IRelayCommand DownloadCommand { get; }
     public IRelayCommand DeleteCommand { get; }
 
@@ -28,6 +36,24 @@ public partial class TrayItemViewModel : ViewModelBase
         _metaLine = $"{item.OwnerAlias}{(IsMine ? "(我)" : "")} · {FormatSize(item.FileSize)} · {FormatTime(item.AddedAt)}";
         DownloadCommand = downloadCommand;
         DeleteCommand = deleteCommand;
+    }
+
+    /// <summary>更新下载进度显示(条目 VM 每次刷新会重建,进度真值存于主 VM 的字典)。</summary>
+    public void ApplyDownloadProgress(int percent, long received, long total)
+    {
+        IsDownloading = true;
+        DownloadPercent = percent;
+        DownloadIndeterminate = percent < 0;
+        DownloadText = percent >= 0
+            ? $"{percent}% · {FormatSize(received)} / {FormatSize(total)}"
+            : $"{FormatSize(received)} / 大小未知";
+    }
+
+    /// <summary>下载结束(成功或失败)清除进度显示。</summary>
+    public void ClearDownloadProgress()
+    {
+        IsDownloading = false;
+        DownloadText = "";
     }
 
     private static string FormatTime(long unixMilliseconds)

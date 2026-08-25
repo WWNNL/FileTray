@@ -128,7 +128,8 @@ public partial class TrayPopupViewModel : ViewModelBase
         RunWithStatus("移除", $"已移除 {item.FileName}", () => _main.DeleteItemCommand.Execute(item));
     }
 
-    /// <summary>下载托盘条目(转发主 VM,保存路径选择走小窗自己的选择器)。</summary>
+    /// <summary>下载托盘条目(转发主 VM,保存路径选择走小窗自己的选择器;
+    /// 结果反馈由主 VM 的 StatusText 同步到小窗左下角)。</summary>
     [RelayCommand]
     private async System.Threading.Tasks.Task DownloadItemAsync(TrayItemViewModel? item)
     {
@@ -144,14 +145,6 @@ public partial class TrayPopupViewModel : ViewModelBase
         var target = await picker(item.FileName);
         if (string.IsNullOrEmpty(target)) return;
 
-        try
-        {
-            await _main.DownloadTrayItemAsync(item.RoomCode, item.Id, target);
-            StatusText = $"已下载: {target}";
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"下载失败: {ex.Message}";
-        }
+        await _main.DownloadTrayItemAsync(item.RoomCode, item.Id, target);
     }
 }
