@@ -39,8 +39,14 @@ public partial class MemberListItemViewModel : ViewModelBase
 
     partial void OnIsSelectedChanged(bool value)
     {
-        // 用户点击选中时通知主 VM 做互斥与筛选;程序性刷新直接赋值不经过用户事件,
-        // 但 TwoWay 绑定也会走这里,靠 _onSelected 内部判断幂等
-        if (value) _onSelected?.Invoke(this);
+        // UI 在 PropertyChanged 里同步高亮样式类;用户点击路径由 _onSelected 处理互斥
+        IsSelectedChanged?.Invoke(this, value);
+        if (value && !_applyingProgrammatic) _onSelected?.Invoke(this);
     }
+
+    /// <summary>程序性赋值期间抑制用户点击回调(防循环)。</summary>
+    internal bool _applyingProgrammatic;
+
+    /// <summary>选中状态变化(UI 同步高亮用)。</summary>
+    internal event Action<MemberListItemViewModel, bool>? IsSelectedChanged;
 }

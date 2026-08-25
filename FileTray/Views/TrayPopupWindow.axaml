@@ -1,0 +1,108 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FileTray.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="360" d:DesignHeight="380"
+        x:Class="FileTray.Views.TrayPopupWindow"
+        x:DataType="vm:TrayPopupViewModel"
+        Title="FileTray 托盘"
+        Width="360" Height="380" MinHeight="220"
+        WindowDecorations="None"
+        ShowInTaskbar="False"
+        Topmost="{Binding PinTopmost}"
+        Background="#F2222222"
+        FontSize="12">
+
+    <!-- AllowDrop:拖文件入小窗直接放入当前房间 -->
+    <Grid x:Name="PopupRoot" DragDrop.AllowDrop="True" RowDefinitions="Auto,*,Auto">
+        <!-- 自绘标题栏:拖动移动 + 置顶切换 + 关闭 -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Background="#33FFFFFF"
+              PointerPressed="OnHeaderPressed" Margin="0,0,0,2">
+            <TextBlock Grid.Column="0" Text="FileTray" FontWeight="SemiBold" Margin="10,5,0,5"
+                       VerticalAlignment="Center" Foreground="#E0FFFFFF"/>
+            <ToggleButton Grid.Column="1" Margin="4,3" Padding="8,2" FontSize="11"
+                          Content="{Binding PinText}" IsChecked="{Binding PinTopmost, Mode=TwoWay}"/>
+            <Button Grid.Column="2" Margin="0,3,6,3" Padding="8,2" FontSize="11"
+                    Content="✕" Click="OnClose"/>
+        </Grid>
+
+        <!-- 主体 -->
+        <Grid Grid.Row="1" RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="10,6,10,4">
+            <!-- 无房间:创建/加入 -->
+            <StackPanel Grid.Row="0" IsVisible="{Binding !HasRoom}" Spacing="6" Margin="0,4,0,0">
+                <Button Content="创建房间" Command="{Binding CreateRoomCommand}" Padding="12,4" HorizontalAlignment="Left"/>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBox Width="150" Text="{Binding JoinCodeInput}" PlaceholderText="8 位房间码"/>
+                    <Button Content="加入" Command="{Binding JoinRoomCommand}" Padding="12,4"/>
+                </StackPanel>
+                <TextBlock Text="创建或加入房间后,此处显示成员与文件" Opacity="0.5" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- 有房间 -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding HasRoom}">
+                <TextBlock Grid.Column="0" Text="房间" Opacity="0.6" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" HorizontalAlignment="Left" Margin="8,0,0,0" Padding="8,3"
+                        FontFamily="Consolas,Monospace" FontSize="16" FontWeight="Bold"
+                        Content="{Binding RoomCode}" Click="OnCopyRoomCode" VerticalAlignment="Center"/>
+                <Button Grid.Column="2" Content="删除房间" Command="{Binding DeleteRoomCommand}"
+                        Padding="8,2" FontSize="11" VerticalAlignment="Center"/>
+            </Grid>
+
+            <!-- 成员:横向滚动细条,首次点击选中筛选(高亮),再次点击复制最优 IP -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,8,0,0" IsVisible="{Binding HasRoom}">
+                <TextBlock Text="成员" Opacity="0.6" VerticalAlignment="Center"/>
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                              PointerWheelChanged="OnHorizontalScrollerWheel">
+                    <ItemsControl x:Name="PopupMemberItems" ItemsSource="{Binding Members}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MemberListItemViewModel">
+                                <Button Margin="0,0,4,0" Padding="6,2" FontSize="11"
+                                        Content="{Binding DisplayText}" Click="OnMemberClick" Tag="{Binding}"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+
+            <!-- 托盘标题 + 添加文件 -->
+            <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,8,0,0" IsVisible="{Binding HasRoom}">
+                <TextBlock Grid.Column="0" Text="{Binding TrayHeader}" Opacity="0.6" VerticalAlignment="Center"/>
+                <Button Grid.Column="1" Content="添加文件" Command="{Binding AddFilesCommand}"
+                        Padding="8,2" FontSize="11"/>
+            </Grid>
+
+            <!-- 文件列表 -->
+            <ListBox Grid.Row="3" Margin="0,4,0,0" ItemsSource="{Binding TrayItems}"
+                     IsVisible="{Binding HasRoom}"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TrayItemViewModel">
+                        <Grid ColumnDefinitions="*,Auto,Auto" Margin="2,3">
+                            <StackPanel Grid.Column="0" Spacing="1" ToolTip.Tip="{Binding FilePath}">
+                                <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+                                <TextBlock Text="{Binding MetaLine}" FontSize="10" Opacity="0.6" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="下载" Margin="6,0,0,0" Padding="10,2" FontSize="11"
+                                    Command="{Binding $parent[Window].DataContext.DownloadItemCommand}" CommandParameter="{Binding}"
+                                    IsVisible="{Binding !IsMine}"/>
+                            <Button Grid.Column="2" Content="删除" Margin="4,0,0,0" Padding="10,2" FontSize="11"
+                                    Command="{Binding $parent[Window].DataContext.DeleteItemCommand}" CommandParameter="{Binding}"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+
+        <!-- 左下角状态提示(与主窗口状态栏同源) -->
+        <Border Grid.Row="2" Background="#22000000" Padding="10,4">
+            <TextBlock Text="{Binding StatusText}" Opacity="0.75" TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding StatusText}"/>
+        </Border>
+    </Grid>
+</Window>

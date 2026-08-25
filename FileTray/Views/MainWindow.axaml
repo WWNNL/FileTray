@@ -15,11 +15,11 @@
     <Grid x:Name="RootGrid" DragDrop.AllowDrop="True">
         <!-- 主内容 -->
         <Grid RowDefinitions="Auto,*,Auto" Margin="14">
-            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
-                <TextBlock Grid.Column="0" Text="{Binding OwnInfoText}" VerticalAlignment="Center" Opacity="0.75"/>
-                <TextBox Grid.Column="1" Width="150" Text="{Binding AliasInput}" PlaceholderText="昵称" Margin="0,0,8,0"/>
-                <Button Grid.Column="2" Content="保存昵称" Command="{Binding SaveAliasCommand}" Padding="12,4"/>
-            </Grid>
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
+            <TextBlock Grid.Column="0" Text="{Binding OwnInfoText}" VerticalAlignment="Center" Opacity="0.75"/>
+            <TextBox Grid.Column="1" Width="150" Text="{Binding AliasInput}" PlaceholderText="昵称" Margin="0,0,8,0"/>
+            <Button Grid.Column="2" Content="保存昵称" Command="{Binding SaveAliasCommand}" Padding="12,4"/>
+        </Grid>
 
             <TabControl Grid.Row="1" Margin="0,10,0,0">
                 <TabItem Header="附近设备">
@@ -123,23 +123,30 @@
                                               HorizontalScrollBarVisibility="Auto"
                                               VerticalScrollBarVisibility="Disabled"
                                               PointerWheelChanged="OnHorizontalScrollerWheel">
-                                    <ItemsControl ItemsSource="{Binding Members}">
+                                    <ItemsControl x:Name="MemberFilterItems" ItemsSource="{Binding Members}">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
                                                 <StackPanel Orientation="Horizontal"/>
                                             </ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:MemberListItemViewModel">
-                                                <ToggleButton Margin="0,0,6,0" Padding="10,3"
-                                                              Content="{Binding DisplayText}"
-                                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:MemberListItemViewModel">
+                                            <!-- 首次点击选中筛选,再次点击复制该成员最优 IP -->
+                                            <Button x:Name="MemberButton" Margin="0,0,6,0" Padding="10,3"
+                                                    Content="{Binding DisplayText}"
+                                                    Click="OnMemberFilterClick"
+                                                    Tag="{Binding}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </ScrollViewer>
 
-                                <TextBlock Grid.Row="3" Text="{Binding TrayHeader}" FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,4,0,0">
+                                    <TextBlock Grid.Column="0" Text="{Binding TrayHeader}" FontWeight="SemiBold"/>
+                                    <Button Grid.Column="1" Content="📌 托盘" Click="OnShowTrayPopup" Padding="10,2"
+                                            VerticalAlignment="Center"
+                                            ToolTip.Tip="弹出精简托盘窗口(房间/成员/文件,可置顶)"/>
+                                </Grid>
                                 <ListBox Grid.Row="4" Margin="0,6,0,0" ItemsSource="{Binding TrayItems}">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:TrayItemViewModel">

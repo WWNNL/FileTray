@@ -36,6 +36,25 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>由 MainWindow 注入:复制文本到剪贴板。</summary>
     public Func<string, Task>? CopyToClipboardAsync { get; set; }
 
+    /// <summary>弹出托盘窗口订阅的刷新信号(与 UI 刷新同源)。</summary>
+    public event Action? RoomsChangedForPopup;
+
+    /// <summary>状态文本变化(弹出小窗同步显示到其左下角)。</summary>
+    public event Action<string>? StatusTextChanged;
+
+    partial void OnStatusTextChanged(string value) => StatusTextChanged?.Invoke(value);
+
+    public string SelfFingerprint => _settings.Fingerprint;
+    public string SelfAlias => _settings.Alias;
+
+    /// <summary>取维护指定房间的在线节点列表(弹出窗口用)。</summary>
+    public IReadOnlyList<DeviceRecord> PopupRoomDevices(string code)
+        => _discovery.GetDevices().Where(d => d.ContainsRoom(code)).OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>按指纹解析设备当前最优 IP(无则 null)。</summary>
+    public string? ResolveDeviceIp(string fingerprint)
+        => _discovery.GetDevices().FirstOrDefault(d => d.Fingerprint == fingerprint)?.BestEndpoint()?.Ip;
+
     /// <summary>由 MainWindow 注入:用户把文件拖入窗口时调用(路径列表)。</summary>
     public Func<IReadOnlyList<string>, Task>? FilesDroppedAsync { get; set; }
 
@@ -110,6 +129,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         RefreshDevices();
         RefreshRooms();
+        RoomsChangedForPopup?.Invoke();
     }
 
     private string FormatLatency(string fingerprint)
@@ -223,12 +243,20 @@ public partial class MainWindowViewModel : ViewModelBase
             return; // 程序性刷新赋值,不是用户点击
         }
 
+        SelectMember(member);
+    }
+
+    /// <summary>选中某个成员并按其筛选托盘(用户点击/弹窗联动共用)。</summary>
+    public void SelectMember(MemberListItemViewModel member)
+    {
         _applyingMemberSelection = true;
         try
         {
             foreach (var m in Members)
             {
+                m._applyingProgrammatic = true;
                 m.IsSelected = ReferenceEquals(m, member);
+                m._applyingProgrammatic = false;
             }
         }
         finally
@@ -299,7 +327,9 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             foreach (var m in Members)
             {
+                m._applyingProgrammatic = true;
                 m.IsSelected = m.Fingerprint == _pendingMemberFilter || (m.Fingerprint == null && _pendingMemberFilter == null);
+                m._applyingProgrammatic = false;
             }
         }
         finally
@@ -418,7 +448,12 @@ public partial class MainWindowViewModel : ViewModelBase
             StatusText = "房间码格式不正确(8 位大写字母/数字)";
             return;
         }
+        JoinRoomWithCode(code);
+    }
 
+    /// <summary>加入指定房间(主窗口与小窗共用)。</summary>
+    public void JoinRoomWithCode(string code)
+    {
         try
         {
             _room.CreateRoom(code);
@@ -513,14 +548,20 @@ public partial class MainWindowViewModel : ViewModelBase
         var target = await picker(item.FileName);
         if (string.IsNullOrEmpty(target)) return;
 
+        await DownloadTrayItemAsync(item.RoomCode, item.Id, target);
+    }
+
+    /// <summary>下载托盘文件到指定路径(主窗口与小窗共用)。</summary>
+    public async Task DownloadTrayItemAsync(string roomCode, string itemId, string target)
+    {
         try
         {
-            await _room.DownloadItemAsync(item.RoomCode, item.Id, target);
+            await _room.DownloadItemAsync(roomCode, itemId, target);
             StatusText = $"已下载: {target}";
         }
         catch (Exception ex)
         {
-            StatusText = "下载失败: " + ex.Message;
+            StatusText = $"下载失败: {ex.Message}";
         }
     }
 

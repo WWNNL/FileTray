@@ -7,6 +7,8 @@
 *.ncb
 *.sdf
 .vs/
+.test-*/
+.test-*/*
 
 # 编译输出
 [Dd]ebug/

@@ -7,12 +7,16 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using FileTray.ViewModels;
 
 namespace FileTray.Views;
 
 public partial class MainWindow : Window
 {
+    private TrayPopupWindow? _trayPopup;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -28,6 +32,7 @@ public partial class MainWindow : Window
 
         if (DataContext is MainWindowViewModel vm)
         {
+            vm.RoomsChangedForPopup += SyncMemberButtonHighlights;
             vm.PickFilesAsync = async () =>
             {
                 var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -63,32 +68,82 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>设备地址按钮:点击复制该 IP。</summary>
-    private async void OnCopyDeviceIp(object? sender, RoutedEventArgs e)
+    // ============================ 弹出托盘窗口 ============================
+
+    /// <summary>成员筛选按钮:未选中→选中并筛选;已选中→复制该成员最优 IP。</summary>
+    private async void OnMemberFilterClick(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: DeviceEndpointViewModel endpoint }
-            && DataContext is MainWindowViewModel vm
-            && vm.CopyToClipboardAsync != null)
+        if (sender is not Button { Tag: MemberListItemViewModel member } button) return;
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        if (member.IsSelected)
         {
-            await vm.CopyToClipboardAsync(endpoint.Ip);
-            vm.StatusText = $"已复制 IP: {endpoint.Ip}";
+            // 再次点击:复制最优 IP(本机成员提示无 IP)
+            var ip = member.Fingerprint is { } fp ? vm.ResolveDeviceIp(fp) : null;
+            if (ip is { } value && vm.CopyToClipboardAsync != null)
+            {
+                await vm.CopyToClipboardAsync(value);
+                vm.StatusText = $"已复制 {member.DisplayText} 的 IP: {value}(延迟最低)";
+            }
+            else
+            {
+                vm.StatusText = member.Fingerprint == null
+                    ? "「全部」无 IP"
+                    : "该成员暂无可用 IP(可能刚离线)";
+            }
+            return;
         }
+
+        vm.SelectMember(member);
+        SyncMemberButtonHighlights();
     }
 
-    /// <summary>横向滚动区:把竖直滚轮换算成水平滚动(Shift+滚轮也保持水平)。</summary>
-    private void OnHorizontalScrollerWheel(object? sender, PointerWheelEventArgs e)
+    /// <summary>把成员按钮的选中态同步为高亮样式类(遍历可视树内的成员按钮)。</summary>
+    private void SyncMemberButtonHighlights()
     {
-        if (sender is not ScrollViewer scroller) return;
-
-        // delta.Y 是"行数"刻度(通常 ±0.1~±3),乘一个像素系数得到顺手的滚动距离
-        var offset = scroller.Offset;
-        var delta = e.Delta.Y != 0 ? e.Delta.Y : e.Delta.X;
-        if (delta == 0) return;
-
-        var target = Math.Clamp(offset.X - delta * 40, 0, scroller.Extent.Width - scroller.Viewport.Width);
-        scroller.Offset = new Vector(target, offset.Y);
-        e.Handled = true;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            foreach (var button in MemberFilterItems.GetVisualDescendants().OfType<Button>())
+            {
+                if (button.Tag is MemberListItemViewModel m)
+                {
+                    var on = m.IsSelected;
+                    if (on && !button.Classes.Contains("memberSelected")) button.Classes.Add("memberSelected");
+                    if (!on && button.Classes.Contains("memberSelected")) button.Classes.Remove("memberSelected");
+                }
+            }
+        });
     }
+
+    /// <summary>右上角"托盘"按钮:在按钮下方弹出精简托盘窗口。</summary>
+    private void OnShowTrayPopup(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+
+        _trayPopup ??= new TrayPopupWindow
+        {
+            DataContext = new TrayPopupViewModel(),
+        };
+        _trayPopup.Bind(vm);
+
+        if (_trayPopup.IsVisible)
+        {
+            _trayPopup.Hide();
+            return;
+        }
+
+        // 弹出位置:按钮正下方,屏幕边界内收缩
+        if (sender is Button button)
+        {
+            var topLeft = button.PointToScreen(new Avalonia.Point(0, button.Bounds.Height + 6));
+            var x = Math.Min(topLeft.X, Screens.Primary?.WorkingArea.Width - 350 ?? topLeft.X);
+            _trayPopup.Position = topLeft.WithX(x);
+        }
+        _trayPopup.Show();
+        _trayPopup.Activate();
+    }
+
+    // ============================ 拖拽 ============================
 
     private static bool HasLocalFiles(DragEventArgs e)
         => e.DataTransfer.Contains(DataFormat.File);
@@ -116,7 +171,6 @@ public partial class MainWindow : Window
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        // DragOver 持续触发,保持效果与遮罩状态即可
         e.DragEffects = HasLocalFiles(e) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
@@ -149,6 +203,34 @@ public partial class MainWindow : Window
         {
             vm.StatusText = "只支持拖入本地文件";
         }
+    }
+
+    // ============================ 其他 ============================
+
+    /// <summary>设备地址按钮:点击复制该 IP。</summary>
+    private async void OnCopyDeviceIp(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: DeviceEndpointViewModel endpoint }
+            && DataContext is MainWindowViewModel vm
+            && vm.CopyToClipboardAsync != null)
+        {
+            await vm.CopyToClipboardAsync(endpoint.Ip);
+            vm.StatusText = $"已复制 IP: {endpoint.Ip}";
+        }
+    }
+
+    /// <summary>横向滚动区:把竖直滚轮换算成水平滚动(Shift+滚轮也保持水平)。</summary>
+    private void OnHorizontalScrollerWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (sender is not ScrollViewer scroller) return;
+
+        var offset = scroller.Offset;
+        var delta = e.Delta.Y != 0 ? e.Delta.Y : e.Delta.X;
+        if (delta == 0) return;
+
+        var target = Math.Clamp(offset.X - delta * 40, 0, Math.Max(0, scroller.Extent.Width - scroller.Viewport.Width));
+        scroller.Offset = new Avalonia.Vector(target, offset.Y);
+        e.Handled = true;
     }
 
     private async void OnCopyRoomCode(object? sender, RoutedEventArgs e)
