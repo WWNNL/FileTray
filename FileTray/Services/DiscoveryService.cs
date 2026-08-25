@@ -73,41 +73,55 @@ public sealed class DiscoveryService : IDisposable
     public IReadOnlyList<DeviceRecord> GetDevices() =>
         _devices.Values.OrderBy(d => d.Alias, StringComparer.OrdinalIgnoreCase).ThenBy(d => d.Endpoint).ToList();
 
-    /// <summary>登记一台设备(来自多播公告或 HTTP register)。</summary>
+    /// <summary>登记一台设备(来自多播公告或 HTTP register):同一指纹的多个来源 IP 合并为同一设备的不同地址。</summary>
     public void Record(DeviceInfoDto info, IPAddress remote)
     {
         if (string.IsNullOrEmpty(info.Fingerprint) || info.Fingerprint == _fingerprintProvider()) return;
 
-        var remoteIp = NetUtil.NormalizeIp(remote.ToString());
-        var isNew = false;
+        var ip = NetUtil.NormalizeIp(remote.ToString());
+        var port = info.Port > 0 ? info.Port : 53317;
+        var now = DateTime.UtcNow;
+        var logKind = 0; // 0=静默 1=首次发现 2=新地址并入
+        var endpointCount = 0;
+
         _devices.AddOrUpdate(
             info.Fingerprint,
             _ =>
             {
-                isNew = true;
-                return new DeviceRecord
+                var record = new DeviceRecord
                 {
                     Fingerprint = info.Fingerprint,
                     Alias = info.Alias,
-                    Ip = remoteIp,
-                    Port = info.Port > 0 ? info.Port : 53317,
                     Protocol = string.IsNullOrEmpty(info.Protocol) ? "http" : info.Protocol,
                     Rooms = ToRoomSet(info.Rooms),
-                    LastSeenUtc = DateTime.UtcNow,
+                    LastSeenUtc = now,
                 };
+                record.UpsertEndpoint(ip, port, now);
+                logKind = 1;
+                endpointCount = 1;
+                return record;
             },
             (_, existing) =>
             {
                 existing.Alias = info.Alias;
-                existing.Ip = remoteIp;
-                if (info.Port > 0) existing.Port = info.Port;
                 if (!string.IsNullOrEmpty(info.Protocol)) existing.Protocol = info.Protocol;
                 existing.Rooms = ToRoomSet(info.Rooms);
-                existing.LastSeenUtc = DateTime.UtcNow;
+                existing.LastSeenUtc = now;
+                var knownCount = existing.EndpointCount;
+                existing.UpsertEndpoint(ip, port, now);
+                endpointCount = existing.EndpointCount;
+                if (endpointCount > knownCount) logKind = 2;
                 return existing;
             });
 
-        if (isNew) Log.Info($"发现设备: {info.Alias} ({remoteIp}:{(info.Port > 0 ? info.Port : 53317)})");
+        if (logKind == 1)
+        {
+            Log.Info($"发现设备: {info.Alias} ({ip}:{port})");
+        }
+        else if (logKind == 2)
+        {
+            Log.Info($"设备 {info.Alias} 并入新地址 {ip}:{port}(共 {endpointCount} 个地址)");
+        }
         DevicesChanged?.Invoke();
     }
 
@@ -254,16 +268,27 @@ public sealed class DiscoveryService : IDisposable
         try
         {
             var cutoff = DateTime.UtcNow.AddSeconds(-12);
-            var expired = _devices.Where(kv => kv.Value.LastSeenUtc < cutoff).Select(kv => kv.Key).ToList();
-            if (expired.Count == 0) return;
+            var expired = new List<string>();
+            var endpointChanged = false;
+
+            foreach (var (fingerprint, device) in _devices)
+            {
+                if (device.PruneEndpoints(cutoff)) endpointChanged = true;
+                if (device.EndpointCount == 0)
+                {
+                    expired.Add(fingerprint);
+                }
+            }
+
             foreach (var fingerprint in expired)
             {
                 if (_devices.TryRemove(fingerprint, out var device))
                 {
-                    Log.Info($"设备离线: {device.Alias} ({device.Endpoint})");
+                    Log.Info($"设备离线: {device.Alias}");
                 }
             }
-            DevicesChanged?.Invoke();
+
+            if (expired.Count > 0 || endpointChanged) DevicesChanged?.Invoke();
         }
         catch (Exception ex)
         {

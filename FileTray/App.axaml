@@ -8,8 +8,35 @@
     <Application.DataTemplates>
         <local:ViewLocator/>
     </Application.DataTemplates>
-  
+
+    <Application.Resources>
+        <!-- 展开态的 thumb 缩放:与缩小态一致(细条),避免展开动画 -->
+        <TransformOperations x:Key="HorizontalSmallScrollThumbScaleTransform">scaleY(0.125) translateY(-2px)</TransformOperations>
+        <TransformOperations x:Key="VerticalSmallScrollThumbScaleTransform">scaleX(0.125) translateX(-2px)</TransformOperations>
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
+
+        <!-- 滚动条永远保持缩小状态:覆盖 Fluent 主题的展开态样式
+             (IsExpanded=true 时轨道/箭头/全尺寸 thumb 都压回缩小态视觉) -->
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ Thumb">
+            <Setter Property="RenderTransform" Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true]:horizontal /template/ Thumb">
+            <Setter Property="RenderTransform" Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true]:vertical /template/ Thumb">
+            <Setter Property="RenderTransform" Value="{DynamicResource VerticalSmallScrollThumbScaleTransform}" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton">
+            <Setter Property="Opacity" Value="0" />
+        </Style>
     </Application.Styles>
 </Application>

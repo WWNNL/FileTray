@@ -30,10 +30,32 @@
                                      SelectedItem="{Binding SelectedDevice}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate x:DataType="vm:DeviceListItemViewModel">
-                                        <StackPanel Margin="4" Spacing="2">
+                                        <StackPanel Margin="4" Spacing="3">
                                             <TextBlock Text="{Binding Alias}" FontWeight="SemiBold"/>
-                                            <TextBlock Text="{Binding Endpoint}" FontSize="11" Opacity="0.65"/>
-                                            <TextBlock Text="{Binding LatencyText}" FontSize="11" Opacity="0.65"/>
+                                            <TextBlock FontSize="11" Opacity="0.65">
+                                                <Run Text="最优延迟: "/><Run Text="{Binding LatencyText}"/>
+                                            </TextBlock>
+                                            <!-- 全部地址:横向滚动(滚轮可滑),滚动条保持缩小状态 -->
+                                            <ScrollViewer x:Name="EndpointScroller"
+                                                          HorizontalScrollBarVisibility="Auto"
+                                                          VerticalScrollBarVisibility="Disabled"
+                                                          MaxHeight="54"
+                                                          PointerWheelChanged="OnHorizontalScrollerWheel">
+                                                <ItemsControl ItemsSource="{Binding Endpoints}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <StackPanel Orientation="Horizontal"/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:DeviceEndpointViewModel">
+                                                            <Button Margin="0,0,4,2" Padding="6,2" FontSize="11"
+                                                                    Content="{Binding DisplayText}"
+                                                                    Click="OnCopyDeviceIp"/>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
                                         </StackPanel>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
@@ -96,10 +118,11 @@
                                     <Button Content="删除房间" Command="{Binding DeleteRoomCommand}" Padding="12,4"/>
                                 </StackPanel>
 
-                                <!-- 成员筛选:固定高度横向滚动,成员再多也只占一行 -->
+                                <!-- 成员筛选:固定高度横向滚动(滚轮可滑),滚动条保持缩小状态 -->
                                 <ScrollViewer Grid.Row="2" Margin="0,10,0,0" Height="36"
                                               HorizontalScrollBarVisibility="Auto"
-                                              VerticalScrollBarVisibility="Disabled">
+                                              VerticalScrollBarVisibility="Disabled"
+                                              PointerWheelChanged="OnHorizontalScrollerWheel">
                                     <ItemsControl ItemsSource="{Binding Members}">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>

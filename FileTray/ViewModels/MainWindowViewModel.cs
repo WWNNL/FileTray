@@ -33,6 +33,9 @@ public partial class MainWindowViewModel : ViewModelBase
     /// <summary>由 MainWindow 在打开后注入的保存路径选择器。</summary>
     public Func<string, Task<string?>>? PickSaveFileAsync { get; set; }
 
+    /// <summary>由 MainWindow 注入:复制文本到剪贴板。</summary>
+    public Func<string, Task>? CopyToClipboardAsync { get; set; }
+
     /// <summary>由 MainWindow 注入:用户把文件拖入窗口时调用(路径列表)。</summary>
     public Func<IReadOnlyList<string>, Task>? FilesDroppedAsync { get; set; }
 
@@ -129,7 +132,11 @@ public partial class MainWindowViewModel : ViewModelBase
             var existing = Devices.FirstOrDefault(d => d.Fingerprint == record.Fingerprint);
             if (existing is null)
             {
-                var vm = new DeviceListItemViewModel(record) { LatencyText = FormatLatency(record.Fingerprint) };
+                var vm = new DeviceListItemViewModel(record)
+                {
+                    LatencyText = FormatLatency(record.Fingerprint),
+                    CopyIpRequested = OnCopyIpRequested,
+                };
                 Devices.Add(vm);
             }
             else
@@ -140,6 +147,22 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         DevicesHeader = $"附近设备 ({Devices.Count})";
+    }
+
+    private async void OnCopyIpRequested(string ip)
+    {
+        try
+        {
+            if (CopyToClipboardAsync != null)
+            {
+                await CopyToClipboardAsync(ip);
+            }
+            StatusText = $"已复制 IP: {ip}";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"复制失败: {ex.Message}";
+        }
     }
 
     private void RefreshRooms()

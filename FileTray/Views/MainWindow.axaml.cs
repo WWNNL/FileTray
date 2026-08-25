@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -50,7 +51,43 @@ public partial class MainWindow : Window
                 });
                 return file?.TryGetLocalPath();
             };
+
+            vm.CopyToClipboardAsync = async text =>
+            {
+                var clipboard = Clipboard;
+                if (clipboard is null) return;
+                var data = new DataTransfer();
+                data.Add(DataTransferItem.CreateText(text));
+                await clipboard.SetDataAsync(data);
+            };
         }
+    }
+
+    /// <summary>设备地址按钮:点击复制该 IP。</summary>
+    private async void OnCopyDeviceIp(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: DeviceEndpointViewModel endpoint }
+            && DataContext is MainWindowViewModel vm
+            && vm.CopyToClipboardAsync != null)
+        {
+            await vm.CopyToClipboardAsync(endpoint.Ip);
+            vm.StatusText = $"已复制 IP: {endpoint.Ip}";
+        }
+    }
+
+    /// <summary>横向滚动区:把竖直滚轮换算成水平滚动(Shift+滚轮也保持水平)。</summary>
+    private void OnHorizontalScrollerWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (sender is not ScrollViewer scroller) return;
+
+        // delta.Y 是"行数"刻度(通常 ±0.1~±3),乘一个像素系数得到顺手的滚动距离
+        var offset = scroller.Offset;
+        var delta = e.Delta.Y != 0 ? e.Delta.Y : e.Delta.X;
+        if (delta == 0) return;
+
+        var target = Math.Clamp(offset.X - delta * 40, 0, scroller.Extent.Width - scroller.Viewport.Width);
+        scroller.Offset = new Vector(target, offset.Y);
+        e.Handled = true;
     }
 
     private static bool HasLocalFiles(DragEventArgs e)
