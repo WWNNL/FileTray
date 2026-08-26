@@ -30,6 +30,10 @@ nuget
 artifacts/
 node_modules
 
+# 本地打包输出(pack.ps1)
+build/
+publish/
+
 # Avalonia 浏览器项目生成文件
 src/Browser/Avalonia.Browser.Blazor/wwwroot/*.js
 src/Browser/Avalonia.Browser.Blazor/webapp/package-lock.json

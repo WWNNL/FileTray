@@ -1,0 +1,123 @@
+name: release
+
+# 打 tag(如 v1.0.0)触发:产出全平台安装包并创建 GitHub Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号(如 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  # ============================ Windows ============================
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish win-x64 (single-file)
+        run: |
+          dotnet publish FileTray/FileTray.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+            -o publish/win-x64
+
+      - name: Stage portable dir
+        shell: bash
+        run: |
+          mkdir -p stage/FileTray
+          cp publish/win-x64/FileTray.exe stage/FileTray/
+          cp publish/win-x64/*.dll stage/FileTray/
+
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path stage/FileTray -DestinationPath FileTray-win-x64-portable-${{ env.VERSION }}.zip
+
+      - name: Velopack installer
+        run: |
+          dotnet tool install -g vpk
+          vpk pack --packId FileTray --packVersion $env:VERSION --packTitle FileTray --packAuthors WWNNL `
+            --mainExe FileTray.exe --packDir stage/FileTray --icon FileTray/Assets/avalonia-logo.ico `
+            --outputDir vpk-out --channel win-x64 --runtime win-x64
+          Move-Item vpk-out/FileTray-win-x64-Setup.exe FileTray-win-x64-Setup-${{ env.VERSION }}.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            FileTray-win-x64-portable-*.zip
+            FileTray-win-x64-Setup-*.exe
+
+  # ============================ macOS ============================
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish osx-${{ matrix.arch }} (single-file)
+        run: |
+          dotnet publish FileTray/FileTray.csproj -c Release -r osx-${{ matrix.arch }} --self-contained true \
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
+            -o publish/osx-${{ matrix.arch }}
+
+      - name: Assemble .app
+        run: |
+          APP="FileTray-${{ matrix.arch }}.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp publish/osx-${{ matrix.arch }}/FileTray publish/osx-${{ matrix.arch }}/*.dylib "$APP/Contents/MacOS/"
+          cp packaging/FileTray.icns "$APP/Contents/Resources/"
+          sed "s/1\.0\.0/${{ env.VERSION }}/" packaging/Info.plist > "$APP/Contents/Info.plist"
+
+      - name: Create .dmg
+        # 挂载后窗口里带 /Applications 快捷方式,拖拽即安装
+        run: |
+          STAGE="dmg-stage"
+          mkdir -p "$STAGE"
+          cp -R "FileTray-${{ matrix.arch }}.app" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "FileTray" -srcfolder "$STAGE" -ov -format UDZO \
+            "FileTray-macos-${{ matrix.arch }}-${{ env.VERSION }}.dmg"
+
+      - name: App zip (备用发行格式)
+        run: ditto -c -k --keepParent "FileTray-${{ matrix.arch }}.app" "FileTray-macos-${{ matrix.arch }}-${{ env.VERSION }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            FileTray-macos-${{ matrix.arch }}-*.dmg
+            FileTray-macos-${{ matrix.arch }}-*.zip
+
+  # ============================ 发布 Release ============================
+  release:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
