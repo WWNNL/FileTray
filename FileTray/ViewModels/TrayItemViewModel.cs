@@ -15,8 +15,13 @@ public partial class TrayItemViewModel : ViewModelBase
     [ObservableProperty] private string _fileName = "";
     [ObservableProperty] private string _metaLine = "";
 
-    /// <summary>正在下载(条目上显示进度条;下载结束恢复 false)。</summary>
+    /// <summary>正在下载或已暂停(条目上显示进度条;结束恢复隐藏)。</summary>
     [ObservableProperty] private bool _isDownloading;
+    /// <summary>已暂停(显示「继续」按钮而非「暂停」)。</summary>
+    [ObservableProperty] private bool _isPaused;
+    [ObservableProperty] private bool _showDownloadButton;
+    [ObservableProperty] private bool _showPauseButton;
+    [ObservableProperty] private bool _showResumeButton;
     /// <summary>下载百分比 0~100;总大小未知时为 -1(进度条转为不确定动画)。</summary>
     [ObservableProperty] private int _downloadPercent = -1;
     [ObservableProperty] private bool _downloadIndeterminate;
@@ -24,9 +29,14 @@ public partial class TrayItemViewModel : ViewModelBase
     [ObservableProperty] private string _downloadText = "";
 
     public IRelayCommand DownloadCommand { get; }
+    public IRelayCommand PauseDownloadCommand { get; }
+    public IRelayCommand ResumeDownloadCommand { get; }
+    public IRelayCommand CancelDownloadCommand { get; }
     public IRelayCommand DeleteCommand { get; }
 
-    public TrayItemViewModel(TrayItemDto item, string selfFingerprint, string roomCode, IRelayCommand downloadCommand, IRelayCommand deleteCommand)
+    public TrayItemViewModel(TrayItemDto item, string selfFingerprint, string roomCode,
+        IRelayCommand downloadCommand, IRelayCommand pauseCommand, IRelayCommand resumeCommand,
+        IRelayCommand cancelCommand, IRelayCommand deleteCommand)
     {
         Id = item.Id;
         FilePath = item.FilePath;
@@ -34,25 +44,38 @@ public partial class TrayItemViewModel : ViewModelBase
         IsMine = item.OwnerFingerprint == selfFingerprint;
         _fileName = item.FileName;
         _metaLine = $"{item.OwnerAlias}{(IsMine ? "(我)" : "")} · {FormatSize(item.FileSize)} · {FormatTime(item.AddedAt)}";
+        _showDownloadButton = !IsMine;
         DownloadCommand = downloadCommand;
+        PauseDownloadCommand = pauseCommand;
+        ResumeDownloadCommand = resumeCommand;
+        CancelDownloadCommand = cancelCommand;
         DeleteCommand = deleteCommand;
     }
 
-    /// <summary>更新下载进度显示(条目 VM 每次刷新会重建,进度真值存于主 VM 的字典)。</summary>
-    public void ApplyDownloadProgress(int percent, long received, long total)
+    /// <summary>更新下载进度显示(条目 VM 每次刷新会重建,进度真值存于主 VM 的会话表)。</summary>
+    public void ApplyDownloadProgress(int percent, long received, long total, bool paused = false)
     {
         IsDownloading = true;
+        IsPaused = paused;
+        ShowDownloadButton = false;
+        ShowPauseButton = !paused;
+        ShowResumeButton = paused;
         DownloadPercent = percent;
         DownloadIndeterminate = percent < 0;
-        DownloadText = percent >= 0
+        var text = percent >= 0
             ? $"{percent}% · {FormatSize(received)} / {FormatSize(total)}"
             : $"{FormatSize(received)} / 大小未知";
+        DownloadText = paused ? "已暂停 · " + text : text;
     }
 
-    /// <summary>下载结束(成功或失败)清除进度显示。</summary>
+    /// <summary>下载结束(成功、取消或失败)清除进度显示。</summary>
     public void ClearDownloadProgress()
     {
         IsDownloading = false;
+        IsPaused = false;
+        ShowDownloadButton = !IsMine;
+        ShowPauseButton = false;
+        ShowResumeButton = false;
         DownloadText = "";
     }
 

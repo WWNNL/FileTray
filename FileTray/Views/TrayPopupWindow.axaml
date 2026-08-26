@@ -15,8 +15,9 @@
         FontSize="12"
         Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}">
 
-    <!-- AllowDrop:拖文件入小窗直接放入当前房间 -->
-    <Grid x:Name="PopupRoot" DragDrop.AllowDrop="True" RowDefinitions="Auto,*,Auto">
+    <!-- AllowDrop:拖文件入小窗直接放入当前房间;Transparent 背景让空白区域也参与命中测试
+         (Avalonia 命中测试基于渲染内容,无背景的 Grid 区域命中不到,拖放目标会解析失败) -->
+    <Grid x:Name="PopupRoot" DragDrop.AllowDrop="True" Background="Transparent" RowDefinitions="Auto,*,Auto">
         <!-- 自绘标题栏:拖动移动 + 置顶切换 + 关闭 -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
               PointerPressed="OnHeaderPressed" Margin="0,0,0,2">
@@ -96,12 +97,22 @@
                                 <TextBlock IsVisible="{Binding IsDownloading}" Text="{Binding DownloadText}"
                                            FontSize="10" Opacity="0.7"/>
                             </StackPanel>
-                            <Button Grid.Column="1" Content="下载" Margin="6,0,0,0" Padding="10,2" FontSize="11"
-                                    Command="{Binding $parent[Window].DataContext.DownloadItemCommand}" CommandParameter="{Binding}"
-                                    IsVisible="{Binding !IsMine}"
-                                    IsEnabled="{Binding !IsDownloading}"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="下载" Margin="6,0,0,0" Padding="10,2" FontSize="11"
+                                        Command="{Binding DownloadCommand}" CommandParameter="{Binding}"
+                                        IsVisible="{Binding ShowDownloadButton}"/>
+                                <Button Content="暂停" Margin="6,0,0,0" Padding="10,2" FontSize="11"
+                                        Command="{Binding PauseDownloadCommand}" CommandParameter="{Binding}"
+                                        IsVisible="{Binding ShowPauseButton}"/>
+                                <Button Content="继续" Margin="6,0,0,0" Padding="10,2" FontSize="11"
+                                        Command="{Binding ResumeDownloadCommand}" CommandParameter="{Binding}"
+                                        IsVisible="{Binding ShowResumeButton}"/>
+                                <Button Content="取消" Margin="4,0,0,0" Padding="10,2" FontSize="11"
+                                        Command="{Binding CancelDownloadCommand}" CommandParameter="{Binding}"
+                                        IsVisible="{Binding IsDownloading}"/>
+                            </StackPanel>
                             <Button Grid.Column="2" Content="删除" Margin="4,0,0,0" Padding="10,2" FontSize="11"
-                                    Command="{Binding $parent[Window].DataContext.DeleteItemCommand}" CommandParameter="{Binding}"/>
+                                    Command="{Binding DeleteCommand}" CommandParameter="{Binding}"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>

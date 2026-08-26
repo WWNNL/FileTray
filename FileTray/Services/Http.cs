@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -68,37 +70,49 @@ public static class Http
         response.EnsureSuccessStatusCode();
     }
 
-    public static async Task DownloadToFileAsync(string url, string savePath)
-    {
-        await DownloadToFileAsync(url, savePath, null).ConfigureAwait(false);
-    }
-
     /// <summary>
-    /// 下载到文件并周期性上报进度(约每 100ms 一次,读不到 Content-Length 时 total=-1、percent=-1)。
-    /// 进度回调在线程池线程触发,调用方自行切换 UI 线程。
+    /// 下载到文件,支持断点续传与取消:
+    /// startOffset&gt;0 时发 Range 请求从断点续写;服务器忽略 Range(返回 200)则从头覆盖重下。
+    /// progress 约每 100ms 上报一次(Received 从断点起累计;Total 为整个文件大小,未知时两者为 -1)。
     /// </summary>
-    public static async Task DownloadToFileAsync(string url, string savePath, IProgress<(int Percent, long Received, long Total)>? progress)
+    public static async Task DownloadToFileAsync(string url, string savePath, long startOffset,
+        IProgress<(int Percent, long Received, long Total)>? progress, CancellationToken ct = default)
     {
-        using var response = await LongClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (startOffset > 0)
+            request.Headers.Range = new RangeHeaderValue(startOffset, null);
+
+        using var response = await LongClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         response.EnsureSuccessStatusCode();
 
-        var total = response.Content.Headers.ContentLength ?? -1;
-        await using var stream = new FileStream(savePath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await using var source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+        long total;
+        if (response.StatusCode == HttpStatusCode.PartialContent)
+        {
+            total = response.Content.Headers.ContentRange?.Length ?? -1;
+        }
+        else
+        {
+            startOffset = 0; // 未按 Range 响应,整体重下
+            total = response.Content.Headers.ContentLength ?? -1;
+        }
+
+        var mode = startOffset > 0 ? FileMode.Append : FileMode.Create;
+        await using var stream = new FileStream(savePath, mode, FileAccess.Write, FileShare.None);
+        await using var source = await response.Content.ReadAsStreamAsync(ct);
 
         if (progress is null)
         {
-            await source.CopyToAsync(stream).ConfigureAwait(false);
+            await source.CopyToAsync(stream, ct);
             return;
         }
 
         var buffer = new byte[64 * 1024];
-        long received = 0;
+        long received = startOffset;
         var lastReport = DateTime.MinValue;
         int read;
-        while ((read = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+        while ((read = await source.ReadAsync(buffer, ct)) > 0)
         {
-            await stream.WriteAsync(buffer.AsMemory(0, read)).ConfigureAwait(false);
+            await stream.WriteAsync(buffer.AsMemory(0, read), ct);
             received += read;
 
             var now = DateTime.UtcNow;

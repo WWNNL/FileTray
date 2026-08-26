@@ -189,13 +189,13 @@ public sealed class HttpApiService : IDisposable
             return state is null ? Results.NotFound() : Results.Json(state, Http.Json);
         });
 
-        // 只允许下载本机放入该房间托盘的文件
+        // 只允许下载本机放入该房间托盘的文件;开启 Range 处理供断点续传(暂停后继续)
         app.MapGet("/api/filetray/v1/file", (string path, string code) =>
         {
             var resolved = _room.ValidateOwnFile(path, code);
             return resolved is null
                 ? Results.NotFound()
-                : Results.File(resolved, "application/octet-stream", Path.GetFileName(resolved));
+                : Results.File(resolved, "application/octet-stream", Path.GetFileName(resolved), enableRangeProcessing: true);
         });
     }
 

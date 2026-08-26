@@ -11,8 +11,9 @@
         Width="860" Height="640"
         WindowStartupLocation="CenterScreen">
 
-    <!-- AllowDrop 是 Avalonia 12 拖拽事件派发的前提:命中测试元素未设置该属性时 DragDropDevice 直接返回 None(禁止光标) -->
-    <Grid x:Name="RootGrid" DragDrop.AllowDrop="True">
+    <!-- AllowDrop 是 Avalonia 12 拖拽事件派发的前提:命中测试元素未设置该属性时 DragDropDevice 直接返回 None(禁止光标);
+         Transparent 背景让无内容的空白区域也参与命中测试 -->
+    <Grid x:Name="RootGrid" DragDrop.AllowDrop="True" Background="Transparent">
         <!-- 主内容 -->
         <Grid RowDefinitions="Auto,*,Auto" Margin="14">
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
@@ -162,10 +163,20 @@
                                                 <TextBlock IsVisible="{Binding IsDownloading}" Text="{Binding DownloadText}"
                                                            FontSize="10" Opacity="0.7"/>
                                             </StackPanel>
-                                            <Button Grid.Column="1" Content="下载" Margin="8,0,0,0" Padding="12,3"
-                                                    Command="{Binding DownloadCommand}" CommandParameter="{Binding}"
-                                                    IsVisible="{Binding !IsMine}"
-                                                    IsEnabled="{Binding !IsDownloading}"/>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="下载" Margin="8,0,0,0" Padding="12,3"
+                                                        Command="{Binding DownloadCommand}" CommandParameter="{Binding}"
+                                                        IsVisible="{Binding ShowDownloadButton}"/>
+                                                <Button Content="暂停" Margin="8,0,0,0" Padding="12,3"
+                                                        Command="{Binding PauseDownloadCommand}" CommandParameter="{Binding}"
+                                                        IsVisible="{Binding ShowPauseButton}"/>
+                                                <Button Content="继续" Margin="8,0,0,0" Padding="12,3"
+                                                        Command="{Binding ResumeDownloadCommand}" CommandParameter="{Binding}"
+                                                        IsVisible="{Binding ShowResumeButton}"/>
+                                                <Button Content="取消" Margin="6,0,0,0" Padding="12,3"
+                                                        Command="{Binding CancelDownloadCommand}" CommandParameter="{Binding}"
+                                                        IsVisible="{Binding IsDownloading}"/>
+                                            </StackPanel>
                                             <Button Grid.Column="2" Content="删除" Margin="6,0,0,0" Padding="12,3"
                                                     Command="{Binding DeleteCommand}" CommandParameter="{Binding}"/>
                                         </Grid>

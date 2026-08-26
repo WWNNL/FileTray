@@ -27,10 +27,24 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _applyingMemberSelection;
     private string? _pendingMemberFilter; // 成员筛选(指纹,null=全部),刷新后据此更新托盘视图
 
-    /// <summary>下载进度真值(条目 Id → 进度);条目 VM 每次刷新重建,进度在重建时回填。</summary>
-    private readonly Dictionary<string, (int Percent, long Received, long Total)> _downloadProgress = new();
-    /// <summary>正在下载的条目 Id(防重复点击)。</summary>
-    private readonly HashSet<string> _downloadingItems = new();
+    /// <summary>
+    /// 单个条目的下载会话。暂停=取消当前请求但保留断点与半成品文件;
+    /// 继续=以文件实际长度为断点发 Range 请求续传;取消=中止并删除半成品。
+    /// 断点以文件长度为准而非内存计数:取消时最后一块可能部分写入,只有文件长度始终准确。
+    /// </summary>
+    private sealed class DownloadState
+    {
+        public required string RoomCode { get; init; }
+        public required string SavePath { get; init; }
+        public CancellationTokenSource Cts { get; set; } = new();
+        public long Received;
+        public long Total = -1;
+        public volatile bool PauseRequested;
+        public bool Paused;
+    }
+
+    /// <summary>下载会话表(条目 Id → 会话);条目 VM 每次刷新重建,状态在重建时回填。</summary>
+    private readonly Dictionary<string, DownloadState> _downloads = new();
 
     /// <summary>由 MainWindow 在打开后注入的文件选择器(打开多个文件)。</summary>
     public Func<Task<IReadOnlyList<string>>>? PickFilesAsync { get; set; }
@@ -362,9 +376,12 @@ public partial class MainWindowViewModel : ViewModelBase
         TrayItems.Clear();
         foreach (var item in items)
         {
-            var vm = new TrayItemViewModel(item, _settings.Fingerprint, code, DownloadItemCommand, DeleteItemCommand);
-            // 下载中的条目在刷新重建后回填进度显示
-            if (_downloadProgress.TryGetValue(item.Id, out var p)) vm.ApplyDownloadProgress(p.Percent, p.Received, p.Total);
+            var vm = new TrayItemViewModel(item, _settings.Fingerprint, code,
+                DownloadItemCommand, PauseDownloadItemCommand, ResumeDownloadItemCommand,
+                CancelDownloadItemCommand, DeleteItemCommand);
+            // 下载中/已暂停的条目在刷新重建后回填进度显示
+            if (_downloads.TryGetValue(item.Id, out var s))
+                vm.ApplyDownloadProgress(PercentOf(s), s.Received, s.Total, s.Paused);
             TrayItems.Add(vm);
         }
         TrayHeader = TrayItems.Count == 0
@@ -542,66 +559,133 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task DownloadItemAsync(TrayItemViewModel? item)
+    private Task DownloadItemAsync(TrayItemViewModel? item)
+        => item is null ? Task.CompletedTask : RequestDownloadAsync(item, PickSaveFileAsync);
+
+    /// <summary>开始或继续下载(主窗口与小窗共用;picker 用于选择保存路径,续传时不弹窗)。</summary>
+    public async Task RequestDownloadAsync(TrayItemViewModel item, Func<string, Task<string?>>? picker)
     {
-        if (item is null) return;
         if (item.IsMine)
         {
             StatusText = "该文件就在本机: " + item.FilePath;
             return;
         }
 
-        var picker = PickSaveFileAsync;
+        if (_downloads.TryGetValue(item.Id, out var running))
+        {
+            if (running.Paused) ResumeDownload(item.Id);
+            else StatusText = "该文件正在下载中…";
+            return;
+        }
+
         if (picker is null) return;
         var target = await picker(item.FileName);
         if (string.IsNullOrEmpty(target)) return;
 
-        await DownloadTrayItemAsync(item.RoomCode, item.Id, target);
+        var s = new DownloadState { RoomCode = item.RoomCode, SavePath = target };
+        _downloads[item.Id] = s;
+        UpdateItemProgress(item.Id); // 立即显示进度条(拿到响应前为不确定态)
+        _ = RunDownloadAsync(item.Id, s);
     }
 
-    /// <summary>下载托盘文件到指定路径(主窗口与小窗共用);进度实时反映到条目 UI。</summary>
-    public async Task DownloadTrayItemAsync(string roomCode, string itemId, string target)
+    /// <summary>暂停:取消当前请求,保留断点与半成品文件,条目切换为「继续」。</summary>
+    [RelayCommand]
+    private void PauseDownloadItem(TrayItemViewModel? item)
     {
-        if (!_downloadingItems.Add(itemId))
-        {
-            StatusText = "该文件正在下载中…";
-            return;
-        }
+        if (item is null) return;
+        if (!_downloads.TryGetValue(item.Id, out var s) || s.Paused) return;
+        s.PauseRequested = true;
+        s.Cts.Cancel();
+    }
 
-        _downloadProgress[itemId] = (0, 0, -1); // 先给不确定进度,拿到 Content-Length 后更新
-        ApplyItemProgress(itemId);
-        try
+    /// <summary>继续:以半成品文件长度为断点续传。</summary>
+    [RelayCommand]
+    private void ResumeDownloadItem(TrayItemViewModel? item)
+    {
+        if (item is null) return;
+        ResumeDownload(item.Id);
+    }
+
+    /// <summary>取消:中止下载并删除半成品文件。</summary>
+    [RelayCommand]
+    private void CancelDownloadItem(TrayItemViewModel? item)
+    {
+        if (item is null) return;
+        if (!_downloads.TryGetValue(item.Id, out var s)) return;
+        s.Cts.Cancel(); // PauseRequested=false → RunDownloadAsync 走取消分支
+    }
+
+    private void ResumeDownload(string itemId)
+    {
+        if (!_downloads.TryGetValue(itemId, out var s) || !s.Paused) return;
+        s.Paused = false;
+        UpdateItemProgress(itemId); // 立即切回「暂停」按钮与运行态
+        _ = RunDownloadAsync(itemId, s);
+    }
+
+    private async Task RunDownloadAsync(string itemId, DownloadState s)
+    {
+        while (true)
         {
-            // Progress<T> 在 UI 线程构造,回调自动回到 UI 线程
-            var progress = new Progress<(int Percent, long Received, long Total)>(p =>
+            s.Cts = new CancellationTokenSource();
+            var ct = s.Cts.Token;
+            try
             {
-                _downloadProgress[itemId] = p;
-                ApplyItemProgress(itemId);
-            });
-            await _room.DownloadItemAsync(roomCode, itemId, target, progress);
-            StatusText = $"已下载: {target}";
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"下载失败: {ex.Message}";
-        }
-        finally
-        {
-            _downloadingItems.Remove(itemId);
-            _downloadProgress.Remove(itemId);
-            ClearItemProgress(itemId);
+                var startOffset = File.Exists(s.SavePath) ? new FileInfo(s.SavePath).Length : 0;
+                // Progress<T> 在 UI 线程构造,回调自动回到 UI 线程
+                var progress = new Progress<(int Percent, long Received, long Total)>(p =>
+                {
+                    s.Received = p.Received;
+                    s.Total = p.Total;
+                    UpdateItemProgress(itemId);
+                });
+                await _room.DownloadItemAsync(s.RoomCode, itemId, s.SavePath, startOffset, progress, ct);
+
+                StatusText = $"已下载: {s.SavePath}";
+                _downloads.Remove(itemId);
+                ClearItemProgress(itemId);
+                return;
+            }
+            catch (OperationCanceledException) when (s.PauseRequested)
+            {
+                s.PauseRequested = false;
+                s.Paused = true;
+                s.Received = File.Exists(s.SavePath) ? new FileInfo(s.SavePath).Length : 0;
+                UpdateItemProgress(itemId);
+                StatusText = "已暂停,点「继续」断点续传";
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                _downloads.Remove(itemId);
+                TryDeleteFile(s.SavePath);
+                ClearItemProgress(itemId);
+                StatusText = "已取消下载";
+                return;
+            }
+            catch (Exception ex)
+            {
+                _downloads.Remove(itemId);
+                TryDeleteFile(s.SavePath);
+                ClearItemProgress(itemId);
+                StatusText = $"下载失败: {ex.Message}";
+                return;
+            }
         }
     }
 
-    /// <summary>把进度字典里的当前值写到列表中该条目的活实例上(主窗与小窗共享实例)。</summary>
-    private void ApplyItemProgress(string itemId)
+    private static int PercentOf(DownloadState s)
+        => s.Total > 0 ? (int)(s.Received * 100 / s.Total) : -1;
+
+    /// <summary>把会话当前进度写到列表中该条目的活实例上(主窗与小窗共享实例)。</summary>
+    private void UpdateItemProgress(string itemId)
     {
-        if (!_downloadProgress.TryGetValue(itemId, out var p)) return;
+        if (!_downloads.TryGetValue(itemId, out var s)) return;
         foreach (var vm in TrayItems)
         {
             if (vm.Id == itemId)
             {
-                vm.ApplyDownloadProgress(p.Percent, p.Received, p.Total);
+                vm.ApplyDownloadProgress(PercentOf(s), s.Received, s.Total, s.Paused);
                 return;
             }
         }
@@ -619,12 +703,26 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"清理半成品文件失败: {ex.Message}");
+        }
+    }
+
     [RelayCommand]
     private void DeleteItem(TrayItemViewModel? item)
     {
         if (item is null) return;
         try
         {
+            // 条目删除后同步/下载都无意义,先取消未完的下载(取消分支会清理半成品与会话)
+            if (_downloads.TryGetValue(item.Id, out var s)) s.Cts.Cancel();
             _room.RemoveItem(item.RoomCode, item.Id);
             StatusText = $"已移除 {item.FileName} 并同步到房间节点";
         }
